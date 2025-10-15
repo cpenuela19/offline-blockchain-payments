@@ -1,0 +1,48 @@
+# Gradle
+.gradle/
+build/
+**/build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+*.ipr
+*.iws
+.cxx/
+local.properties
+captures/
+.externalNativeBuild/
+.DS_Store
+Thumbs.db
+
+# Kotlin / JetBrains
+out/
+
+# Misc
+*.log
+*.tmp
+*.orig
+
+# Firebase & credentials
+google-services.json
+**/google-services.json
+
+# Generated APKs
+/app/release/
+
+
+# Llaves/firmas y props locales
+*.jks
+*.keystore
+keystore.properties
+*.pem
+
+# Reportes/lint/perf
+.lint/
+*.hprof
+
+# Artefactos de distribución
+*.apk
+*.aab
+app/release/
