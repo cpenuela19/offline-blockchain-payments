@@ -103,13 +103,13 @@ fun ScanQRView(onCancel: () -> Unit) {
             )
         }
         
-        Spacer(modifier = Modifier.height(48.dp))
+        Spacer(modifier = Modifier.height(32.dp))
         
         // QR Scanner Frame (marco con líneas punteadas)
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(420.dp)
+                .height(380.dp)
                 .padding(horizontal = 24.dp)
                 .border(
                     width = 4.dp,
@@ -158,14 +158,14 @@ fun ScanQRView(onCancel: () -> Unit) {
                 Text(
                     text = "Apunta al QR del vendedor",
                     color = LightSteelBlue,
-                    fontSize = 26.sp,
+                    fontSize = 24.sp,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.align(Alignment.Center)
                 )
             }
         }
         
-        Spacer(modifier = Modifier.weight(1f))
+        Spacer(modifier = Modifier.height(48.dp))
         
         // Botón Cancelar
         Button(
@@ -173,8 +173,7 @@ fun ScanQRView(onCancel: () -> Unit) {
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 24.dp)
-                .height(64.dp)
-                .padding(bottom = 24.dp),
+                .height(56.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = DarkCard
             ),
@@ -182,11 +181,13 @@ fun ScanQRView(onCancel: () -> Unit) {
         ) {
             Text(
                 text = "Cancelar",
-                fontSize = 38.sp,
+                fontSize = 32.sp,
                 color = White,
                 fontWeight = FontWeight.Normal
             )
         }
+        
+        Spacer(modifier = Modifier.height(24.dp))
     }
 }
 
@@ -239,7 +240,7 @@ fun ConfirmationView(
             )
         }
         
-        Spacer(modifier = Modifier.height(80.dp))
+        Spacer(modifier = Modifier.height(60.dp))
         
         // Información de pago
         Card(
@@ -254,38 +255,44 @@ fun ConfirmationView(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(24.dp),
+                    .padding(20.dp),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Column {
+                Column(
+                    modifier = Modifier.weight(1f)
+                ) {
                     Text(
                         text = "Vas a pagar",
                         color = LightSteelBlue,
-                        fontSize = 20.sp
+                        fontSize = 18.sp
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
                     Text(
                         text = "$12,000 COP",
                         color = White,
-                        fontSize = 42.sp,
+                        fontSize = 32.sp,
                         fontWeight = FontWeight.Bold
                     )
                 }
                 
+                Spacer(modifier = Modifier.width(12.dp))
+                
                 Column(
+                    modifier = Modifier.weight(1f),
                     horizontalAlignment = Alignment.End
                 ) {
                     Text(
                         text = "Destino",
                         color = LightSteelBlue,
-                        fontSize = 20.sp
+                        fontSize = 18.sp
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
                     Text(
                         text = "Marta Gomez",
                         color = White,
-                        fontSize = 42.sp,
-                        fontWeight = FontWeight.Bold
+                        fontSize = 32.sp,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.End
                     )
                 }
             }
