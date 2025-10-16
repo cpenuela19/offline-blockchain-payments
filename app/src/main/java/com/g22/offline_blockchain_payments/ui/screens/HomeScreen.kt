@@ -22,7 +22,8 @@ fun HomeScreen(
     onMenuClick: () -> Unit,
     onSendClick: () -> Unit = {},
     onReceiveClick: () -> Unit = {},
-    onSwapClick: () -> Unit = {}
+    onSwapClick: () -> Unit = {},
+    onHistoryClick: () -> Unit = {}
 ) {
     Box(
         modifier = Modifier
@@ -37,7 +38,7 @@ fun HomeScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 48.dp, start = 16.dp, end = 16.dp),
+                    .padding(top = 32.dp, start = 16.dp, end = 16.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
@@ -61,17 +62,17 @@ fun HomeScreen(
                 Spacer(modifier = Modifier.width(44.dp))
             }
             
-            Spacer(modifier = Modifier.height(40.dp))
+            Spacer(modifier = Modifier.height(24.dp))
             
             // Avatar
-            ProfileAvatar(size = 100)
+            ProfileAvatar(size = 80)
             
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(16.dp))
             
             // Dirección de wallet
             WalletAddressChip(address = "0xA80B...b6320F")
             
-            Spacer(modifier = Modifier.height(40.dp))
+            Spacer(modifier = Modifier.height(24.dp))
             
             // Tarjeta de Balance
             BalanceCard(
@@ -79,7 +80,7 @@ fun HomeScreen(
                 amount = "$58,200 COP"
             )
             
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(12.dp))
             
             // Tarjeta de Tokens disponibles
             BalanceCard(
@@ -87,7 +88,7 @@ fun HomeScreen(
                 amount = "58.200 TK"
             )
             
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(12.dp))
             
             // Tarjeta de Tokens por sincronizar
             BalanceCard(
@@ -95,43 +96,50 @@ fun HomeScreen(
                 amount = "20.000 TK"
             )
             
-            Spacer(modifier = Modifier.height(40.dp))
+            Spacer(modifier = Modifier.height(24.dp))
             
-            // Botones de acción (primera fila)
+            // Botones de acción (primera fila - 3 botones)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 32.dp),
+                    .padding(horizontal = 24.dp),
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
                 ActionButton(
                     iconRes = R.drawable.ic_send,
                     text = "Enviar",
-                    onClick = onSendClick
+                    onClick = onSendClick,
+                    modifier = Modifier.weight(1f)
                 )
+                Spacer(modifier = Modifier.width(8.dp))
                 ActionButton(
                     iconRes = R.drawable.ic_receive,
                     text = "Recibir",
-                    onClick = onReceiveClick
+                    onClick = onReceiveClick,
+                    modifier = Modifier.weight(1f)
                 )
+                Spacer(modifier = Modifier.width(8.dp))
                 ActionButton(
                     iconRes = R.drawable.ic_swap,
                     text = "Intercambiar",
-                    onClick = onSwapClick
+                    onClick = onSwapClick,
+                    modifier = Modifier.weight(1f)
                 )
             }
             
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
             
             // Botón de histórico (segunda fila, centrado)
             Box(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp),
                 contentAlignment = Alignment.Center
             ) {
                 ActionButton(
                     iconRes = R.drawable.ic_history,
                     text = "histórico",
-                    onClick = { /* Navegar a histórico */ }
+                    onClick = onHistoryClick
                 )
             }
             
@@ -141,11 +149,11 @@ fun HomeScreen(
             Text(
                 text = "Modo: Offline disponible • Saldo local listo • Sincroniza cuando haya señal",
                 color = LightSteelBlue,
-                fontSize = 14.sp,
+                fontSize = 13.sp,
                 textAlign = TextAlign.Center,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 24.dp, vertical = 32.dp)
+                    .padding(horizontal = 24.dp, vertical = 16.dp)
             )
         }
     }

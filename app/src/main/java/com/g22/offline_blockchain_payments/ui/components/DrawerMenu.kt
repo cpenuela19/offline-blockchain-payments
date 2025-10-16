@@ -21,8 +21,7 @@ fun DrawerMenu(
     onSwapClick: () -> Unit,
     onHistoryClick: () -> Unit,
     onSettingsClick: () -> Unit,
-    onLogoutClick: () -> Unit,
-    onCurrencyClick: (String) -> Unit = {}
+    onLogoutClick: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -73,34 +72,6 @@ fun DrawerMenu(
         }
         
         Spacer(modifier = Modifier.height(32.dp))
-        
-        // Sección de monedas
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(DarkCard)
-                .padding(vertical = 16.dp)
-        ) {
-            CurrencyRow(
-                currencyCode = "JOD",
-                amount = "604.250000",
-                onClick = { onCurrencyClick("JOD") }
-            )
-            MenuDivider()
-            CurrencyRow(
-                currencyCode = "USD",
-                amount = "929.750000",
-                onClick = { onCurrencyClick("USD") }
-            )
-            MenuDivider()
-            CurrencyRow(
-                currencyCode = "ILS",
-                amount = "4599.010000",
-                onClick = { onCurrencyClick("ILS") }
-            )
-        }
-        
-        Spacer(modifier = Modifier.height(24.dp))
         
         // Opciones de menú
         Column {

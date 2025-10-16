@@ -49,12 +49,12 @@ fun WalletAddressChip(
                 color = CardDarkBlue,
                 shape = RoundedCornerShape(20.dp)
             )
-            .padding(horizontal = 24.dp, vertical = 8.dp)
+            .padding(horizontal = 20.dp, vertical = 6.dp)
     ) {
         Text(
             text = address,
             color = LightSteelBlue,
-            fontSize = 20.sp
+            fontSize = 17.sp
         )
     }
 }
@@ -75,18 +75,18 @@ fun BalanceCard(
         shape = RoundedCornerShape(16.dp)
     ) {
         Column(
-            modifier = Modifier.padding(20.dp)
+            modifier = Modifier.padding(16.dp)
         ) {
             Text(
                 text = title,
                 color = LightSteelBlue,
-                fontSize = 18.sp
+                fontSize = 16.sp
             )
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(6.dp))
             Text(
                 text = amount,
                 color = White,
-                fontSize = 32.sp,
+                fontSize = 28.sp,
                 fontWeight = FontWeight.Bold
             )
         }
@@ -106,7 +106,7 @@ fun ActionButton(
     ) {
         Box(
             modifier = Modifier
-                .size(80.dp)
+                .size(64.dp)
                 .clip(CircleShape)
                 .background(DarkCard),
             contentAlignment = Alignment.Center
@@ -115,14 +115,16 @@ fun ActionButton(
                 painter = painterResource(id = iconRes),
                 contentDescription = text,
                 tint = CyanBlue,
-                modifier = Modifier.size(32.dp)
+                modifier = Modifier.size(28.dp)
             )
         }
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(6.dp))
         Text(
             text = text,
             color = White,
-            fontSize = 24.sp
+            fontSize = 18.sp,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            maxLines = 2
         )
     }
 }
