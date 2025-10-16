@@ -14,6 +14,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.g22.offline_blockchain_payments.ui.components.DrawerMenu
 import com.g22.offline_blockchain_payments.ui.screens.HomeScreen
+import com.g22.offline_blockchain_payments.ui.screens.HistoryScreen
 import com.g22.offline_blockchain_payments.ui.screens.ReceiveScreen
 import com.g22.offline_blockchain_payments.ui.screens.SendScreen
 import com.g22.offline_blockchain_payments.ui.theme.OfflineblockchainpaymentsTheme
@@ -47,7 +48,7 @@ class MainActivity : ComponentActivity() {
                             },
                             onHistoryClick = {
                                 scope.launch { drawerState.close() }
-                                // Navegar a pantalla de histórico (por implementar)
+                                navController.navigate("history")
                             },
                             onSettingsClick = {
                                 scope.launch { drawerState.close() }
@@ -77,7 +78,7 @@ class MainActivity : ComponentActivity() {
                                     // Navegar a pantalla de swap (por implementar)
                                 },
                                 onHistoryClick = {
-                                    // Navegar a pantalla de histórico (por implementar)
+                                    navController.navigate("history")
                                 }
                             )
                         }
@@ -92,6 +93,14 @@ class MainActivity : ComponentActivity() {
                         
                         composable("receive") {
                             ReceiveScreen(
+                                onBack = {
+                                    navController.popBackStack()
+                                }
+                            )
+                        }
+                        
+                        composable("history") {
+                            HistoryScreen(
                                 onBack = {
                                     navController.popBackStack()
                                 }
