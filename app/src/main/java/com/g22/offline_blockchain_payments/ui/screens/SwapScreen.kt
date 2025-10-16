@@ -26,16 +26,16 @@ import androidx.compose.ui.unit.sp
 import com.g22.offline_blockchain_payments.ui.theme.*
 
 @Composable
-fun SwapScreen(onBack: () -> Unit) {
+fun SwapScreen(onBack: () -> Unit, onSwapComplete: () -> Unit = {}) {
     var fromAmount by remember { mutableStateOf("10") }
-    var toAmount by remember { mutableStateOf("34539.5") }
-    var fromCurrency by remember { mutableStateOf("TK") }
-    var toCurrency by remember { mutableStateOf("COP") }
+    var fromCurrency by remember { mutableStateOf("COP") }
     var showFromDropdown by remember { mutableStateOf(false) }
-    var showToDropdown by remember { mutableStateOf(false) }
-
-    // Tasa de conversión hardcodeada
-    val conversionRate = "1 TK = 3,453.95 COP"
+    
+    // El toCurrency siempre es lo opuesto al fromCurrency
+    val toCurrency = if (fromCurrency == "COP") "TK" else "COP"
+    
+    // El toAmount es igual al fromAmount (conversión 1:1)
+    val toAmount = fromAmount
 
     Column(
         modifier = Modifier
@@ -148,16 +148,16 @@ fun SwapScreen(onBack: () -> Unit) {
                             modifier = Modifier.background(CardDarkBlue)
                         ) {
                             DropdownMenuItem(
-                                text = { Text("TK", color = White) },
+                                text = { Text("COP", color = White) },
                                 onClick = {
-                                    fromCurrency = "TK"
+                                    fromCurrency = "COP"
                                     showFromDropdown = false
                                 }
                             )
                             DropdownMenuItem(
-                                text = { Text("COP", color = White) },
+                                text = { Text("TK", color = White) },
                                 onClick = {
-                                    fromCurrency = "COP"
+                                    fromCurrency = "TK"
                                     showFromDropdown = false
                                 }
                             )
@@ -211,71 +211,32 @@ fun SwapScreen(onBack: () -> Unit) {
                 )
                 Spacer(modifier = Modifier.height(12.dp))
 
-                // Fila con dropdown y input
+                // Fila con moneda y resultado (solo lectura)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Dropdown de moneda
-                    Box {
-                        Row(
-                            modifier = Modifier
-                                .clickable { showToDropdown = !showToDropdown }
-                                .padding(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = toCurrency,
-                                color = White,
-                                fontSize = 24.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Icon(
-                                imageVector = Icons.Default.ArrowDropDown,
-                                contentDescription = "Desplegar",
-                                tint = White,
-                                modifier = Modifier.size(28.dp)
-                            )
-                        }
-                        
-                        DropdownMenu(
-                            expanded = showToDropdown,
-                            onDismissRequest = { showToDropdown = false },
-                            modifier = Modifier.background(CardDarkBlue)
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("COP", color = White) },
-                                onClick = {
-                                    toCurrency = "COP"
-                                    showToDropdown = false
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("TK", color = White) },
-                                onClick = {
-                                    toCurrency = "TK"
-                                    showToDropdown = false
-                                }
-                            )
-                        }
+                    // Moneda (sin dropdown)
+                    Row(
+                        modifier = Modifier.padding(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = toCurrency,
+                            color = White,
+                            fontSize = 24.sp,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
 
-                    // Input de cantidad
-                    BasicTextField(
-                        value = toAmount,
-                        onValueChange = { newValue ->
-                            if (newValue.isEmpty() || newValue.matches(Regex("^\\d*\\.?\\d*$"))) {
-                                toAmount = newValue
-                            }
-                        },
-                        textStyle = TextStyle(
-                            color = White,
-                            fontSize = 28.sp,
-                            fontWeight = FontWeight.Bold,
-                            textAlign = TextAlign.End
-                        ),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    // Cantidad resultante (solo lectura)
+                    Text(
+                        text = toAmount,
+                        color = White,
+                        fontSize = 28.sp,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.End,
                         modifier = Modifier
                             .weight(1f)
                             .padding(start = 16.dp)
@@ -286,7 +247,7 @@ fun SwapScreen(onBack: () -> Unit) {
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // Tasa de conversión
+        // Tasa de conversión dinámica
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -295,7 +256,7 @@ fun SwapScreen(onBack: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = conversionRate,
+                text = if (fromCurrency == "COP") "1 COP = 1 TK" else "1 TK = 1 COP",
                 color = LightSteelBlue,
                 fontSize = 20.sp,
                 fontWeight = FontWeight.Normal
@@ -306,7 +267,7 @@ fun SwapScreen(onBack: () -> Unit) {
 
         // Botón Intercambiar
         Button(
-            onClick = { /* TODO: Implementar lógica de swap */ },
+            onClick = { onSwapComplete() },
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 24.dp)

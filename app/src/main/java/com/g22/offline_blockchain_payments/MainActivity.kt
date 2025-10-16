@@ -112,6 +112,11 @@ class MainActivity : ComponentActivity() {
                             SwapScreen(
                                 onBack = {
                                     navController.popBackStack()
+                                },
+                                onSwapComplete = {
+                                    navController.navigate("home") {
+                                        popUpTo("home") { inclusive = true }
+                                    }
                                 }
                             )
                         }
