@@ -61,14 +61,14 @@ fun HistoryScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 24.dp),
+                    .padding(top = 20.dp),
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
                     text = "Mis ventas (offline)",
                     color = White,
-                    fontSize = 32.sp,
+                    fontSize = 28.sp,
                     fontWeight = FontWeight.Normal,
                     textAlign = TextAlign.Center
                 )
@@ -77,24 +77,24 @@ fun HistoryScreen(
             // Offline indicator
             Row(
                 modifier = Modifier
-                    .padding(top = 8.dp)
+                    .padding(top = 6.dp)
                     .align(Alignment.End),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Box(
                     modifier = Modifier
-                        .size(12.dp)
+                        .size(10.dp)
                         .background(CyanBlue, shape = CircleShape)
                 )
-                Spacer(modifier = Modifier.width(8.dp))
+                Spacer(modifier = Modifier.width(6.dp))
                 Text(
                     text = "Offline",
                     color = LightSteelBlue,
-                    fontSize = 20.sp
+                    fontSize = 16.sp
                 )
             }
             
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(16.dp))
             
             // Sección "Hoy"
             TransactionSection(
@@ -103,7 +103,7 @@ fun HistoryScreen(
                 total = "$25,500 COP"
             )
             
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(16.dp))
             
             // Sección "Ayer"
             TransactionSection(
@@ -112,7 +112,7 @@ fun HistoryScreen(
                 total = "$25,500 COP"
             )
             
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(24.dp))
             
             // Botón Ver más
             Button(
@@ -120,7 +120,7 @@ fun HistoryScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 8.dp)
-                    .height(56.dp),
+                    .height(52.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = CyanBlue
                 ),
@@ -128,13 +128,13 @@ fun HistoryScreen(
             ) {
                 Text(
                     text = "Ver más",
-                    fontSize = 32.sp,
+                    fontSize = 28.sp,
                     color = White,
                     fontWeight = FontWeight.Normal
                 )
             }
             
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(10.dp))
             
             // Botón Volver atrás
             Button(
@@ -142,7 +142,7 @@ fun HistoryScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 8.dp)
-                    .height(56.dp),
+                    .height(52.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = DarkCard
                 ),
@@ -150,13 +150,13 @@ fun HistoryScreen(
             ) {
                 Text(
                     text = "Volver atrás",
-                    fontSize = 32.sp,
+                    fontSize = 28.sp,
                     color = White,
                     fontWeight = FontWeight.Normal
                 )
             }
             
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(20.dp))
         }
     }
 }
@@ -183,26 +183,26 @@ fun TransactionSection(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(16.dp),
+                    .padding(12.dp),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
                     text = title,
                     color = LightSteelBlue,
-                    fontSize = 22.sp,
+                    fontSize = 18.sp,
                     modifier = Modifier.weight(1f)
                 )
                 Text(
                     text = "Estado",
                     color = LightSteelBlue,
-                    fontSize = 22.sp,
+                    fontSize = 18.sp,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.weight(1.2f)
                 )
                 Text(
                     text = "Valor",
                     color = LightSteelBlue,
-                    fontSize = 22.sp,
+                    fontSize = 18.sp,
                     textAlign = TextAlign.End,
                     modifier = Modifier.weight(0.8f)
                 )
@@ -227,18 +227,18 @@ fun TransactionSection(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(16.dp)
+                    .padding(12.dp)
             ) {
                 Text(
                     text = "Total del día",
                     color = LightSteelBlue,
-                    fontSize = 20.sp
+                    fontSize = 16.sp
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = total,
                     color = White,
-                    fontSize = 36.sp,
+                    fontSize = 28.sp,
                     fontWeight = FontWeight.Bold
                 )
             }
@@ -260,7 +260,7 @@ fun TransactionItem(transaction: Transaction) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
+                .padding(12.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -271,13 +271,13 @@ fun TransactionItem(transaction: Transaction) {
                 Text(
                     text = transaction.time,
                     color = LightSteelBlue,
-                    fontSize = 18.sp
+                    fontSize = 14.sp
                 )
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = "Venta #${transaction.id}",
                     color = White,
-                    fontSize = 28.sp,
+                    fontSize = 20.sp,
                     fontWeight = FontWeight.Bold
                 )
             }
@@ -293,9 +293,9 @@ fun TransactionItem(transaction: Transaction) {
                         .background(
                             color = if (transaction.status == TransactionStatus.SYNCHRONIZED) 
                                 Color(0xFF00FFB3) else Color.Transparent,
-                            shape = RoundedCornerShape(20.dp)
+                            shape = RoundedCornerShape(16.dp)
                         )
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
@@ -303,7 +303,7 @@ fun TransactionItem(transaction: Transaction) {
                             "Sincronizada" else "Pendiente",
                         color = if (transaction.status == TransactionStatus.SYNCHRONIZED) 
                             DarkNavy else LightSteelBlue,
-                        fontSize = 18.sp,
+                        fontSize = 14.sp,
                         textAlign = TextAlign.Center
                     )
                 }
@@ -313,7 +313,7 @@ fun TransactionItem(transaction: Transaction) {
             Text(
                 text = transaction.amount,
                 color = White,
-                fontSize = 28.sp,
+                fontSize = 20.sp,
                 fontWeight = FontWeight.Bold,
                 textAlign = TextAlign.End,
                 modifier = Modifier.weight(0.8f)
