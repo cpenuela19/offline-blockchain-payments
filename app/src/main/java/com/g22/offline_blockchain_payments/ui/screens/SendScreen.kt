@@ -360,15 +360,14 @@ fun ReceiptView(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(top = 24.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
+            horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
                 text = "Comprobante local",
                 color = White,
-                fontSize = 36.sp,
+                fontSize = 32.sp,
                 fontWeight = FontWeight.Normal,
-                modifier = Modifier.weight(1f),
                 textAlign = TextAlign.Center
             )
         }
@@ -389,16 +388,16 @@ fun ReceiptView(
             Text(
                 text = "Offline",
                 color = LightSteelBlue,
-                fontSize = 24.sp
+                fontSize = 20.sp
             )
         }
         
-        Spacer(modifier = Modifier.height(32.dp))
+        Spacer(modifier = Modifier.height(24.dp))
         
         // Check icon
         Box(
             modifier = Modifier
-                .size(120.dp)
+                .size(100.dp)
                 .clip(CircleShape)
                 .background(Color(0xFF00FFB3)),
             contentAlignment = Alignment.Center
@@ -406,12 +405,12 @@ fun ReceiptView(
             Text(
                 text = "✓",
                 color = DarkNavy,
-                fontSize = 64.sp,
+                fontSize = 56.sp,
                 fontWeight = FontWeight.Bold
             )
         }
         
-        Spacer(modifier = Modifier.height(32.dp))
+        Spacer(modifier = Modifier.height(24.dp))
         
         // Información del comprobante
         Card(
@@ -426,97 +425,118 @@ fun ReceiptView(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(24.dp)
+                    .padding(20.dp)
             ) {
+                // Monto
                 Text(
                     text = "Monto",
                     color = LightSteelBlue,
-                    fontSize = 18.sp
+                    fontSize = 16.sp
                 )
+                Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = "$12,000 COP",
                     color = White,
-                    fontSize = 38.sp,
+                    fontSize = 32.sp,
                     fontWeight = FontWeight.Bold
                 )
                 
-                Spacer(modifier = Modifier.height(20.dp))
+                Spacer(modifier = Modifier.height(16.dp))
                 
+                // De y Para
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Column {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = "De",
                             color = LightSteelBlue,
-                            fontSize = 16.sp
+                            fontSize = 14.sp
                         )
+                        Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = "Cliente: Juan P.",
                             color = White,
-                            fontSize = 20.sp
+                            fontSize = 16.sp
                         )
                     }
                     
-                    Column(horizontalAlignment = Alignment.End) {
+                    Spacer(modifier = Modifier.width(12.dp))
+                    
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        horizontalAlignment = Alignment.End
+                    ) {
                         Text(
                             text = "Para",
                             color = LightSteelBlue,
-                            fontSize = 16.sp
+                            fontSize = 14.sp
                         )
+                        Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = "Vendedor: Marta Gomez",
                             color = White,
-                            fontSize = 20.sp
+                            fontSize = 16.sp,
+                            textAlign = TextAlign.End
                         )
                     }
                 }
                 
-                Spacer(modifier = Modifier.height(20.dp))
+                Spacer(modifier = Modifier.height(16.dp))
                 
+                // Identificador y Hora
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Column {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = "Identificador",
                             color = LightSteelBlue,
-                            fontSize = 16.sp
+                            fontSize = 14.sp
                         )
+                        Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = "OF-9F3A-09321",
                             color = White,
-                            fontSize = 20.sp
+                            fontSize = 16.sp
                         )
                     }
                     
-                    Column(horizontalAlignment = Alignment.End) {
+                    Spacer(modifier = Modifier.width(12.dp))
+                    
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        horizontalAlignment = Alignment.End
+                    ) {
                         Text(
                             text = "Hora",
                             color = LightSteelBlue,
-                            fontSize = 16.sp
+                            fontSize = 14.sp
                         )
+                        Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = "09:34 AM",
                             color = White,
-                            fontSize = 20.sp
+                            fontSize = 16.sp
                         )
                     }
                 }
                 
-                Spacer(modifier = Modifier.height(20.dp))
+                Spacer(modifier = Modifier.height(16.dp))
                 
+                // Estado
                 Text(
                     text = "Estado",
                     color = LightSteelBlue,
-                    fontSize = 16.sp
+                    fontSize = 14.sp
                 )
+                Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = "Guardado offline (pendiente sincronizar)",
                     color = White,
-                    fontSize = 18.sp
+                    fontSize = 15.sp
                 )
             }
         }
@@ -529,7 +549,7 @@ fun ReceiptView(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 24.dp)
-                .height(64.dp),
+                .height(56.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = CyanBlue
             ),
@@ -537,13 +557,13 @@ fun ReceiptView(
         ) {
             Text(
                 text = "Guardar",
-                fontSize = 38.sp,
+                fontSize = 32.sp,
                 color = White,
                 fontWeight = FontWeight.Normal
             )
         }
         
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(12.dp))
         
         // Botón Cerrar
         Button(
@@ -551,7 +571,7 @@ fun ReceiptView(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 24.dp)
-                .height(64.dp),
+                .height(56.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = DarkCard
             ),
@@ -559,21 +579,21 @@ fun ReceiptView(
         ) {
             Text(
                 text = "Cerrar y volver al inicio",
-                fontSize = 32.sp,
+                fontSize = 26.sp,
                 color = White,
                 fontWeight = FontWeight.Normal
             )
         }
         
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(12.dp))
         
         // Mensaje de sincronización
         Text(
             text = "Cuando haya señal, se sincronizará automáticamente.",
             color = LightSteelBlue,
-            fontSize = 13.sp,
+            fontSize = 12.sp,
             textAlign = TextAlign.Center,
-            modifier = Modifier.padding(horizontal = 24.dp)
+            modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
         )
     }
 }
