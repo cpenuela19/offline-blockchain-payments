@@ -108,7 +108,7 @@ fun HomeScreen(
                 )
                 ActionButton(
                     iconRes = R.drawable.ic_swap,
-                    text = "Swap",
+                    text = "Intercambiar",
                     onClick = onSwapClick
                 )
             }
