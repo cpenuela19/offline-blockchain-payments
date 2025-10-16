@@ -15,6 +15,7 @@ import androidx.navigation.compose.rememberNavController
 import com.g22.offline_blockchain_payments.ui.components.DrawerMenu
 import com.g22.offline_blockchain_payments.ui.screens.HomeScreen
 import com.g22.offline_blockchain_payments.ui.screens.ReceiveScreen
+import com.g22.offline_blockchain_payments.ui.screens.SendScreen
 import com.g22.offline_blockchain_payments.ui.theme.OfflineblockchainpaymentsTheme
 import kotlinx.coroutines.launch
 
@@ -34,7 +35,7 @@ class MainActivity : ComponentActivity() {
                         DrawerMenu(
                             onSendClick = {
                                 scope.launch { drawerState.close() }
-                                navController.navigate("receive") // Por ahora usa la vista de recibir
+                                navController.navigate("send")
                             },
                             onReceiveClick = {
                                 scope.launch { drawerState.close() }
@@ -67,7 +68,7 @@ class MainActivity : ComponentActivity() {
                                     scope.launch { drawerState.open() }
                                 },
                                 onSendClick = {
-                                    navController.navigate("receive") // Por ahora usa la vista de recibir
+                                    navController.navigate("send")
                                 },
                                 onReceiveClick = {
                                     navController.navigate("receive")
@@ -77,6 +78,14 @@ class MainActivity : ComponentActivity() {
                                 },
                                 onHistoryClick = {
                                     // Navegar a pantalla de histórico (por implementar)
+                                }
+                            )
+                        }
+                        
+                        composable("send") {
+                            SendScreen(
+                                onBack = {
+                                    navController.popBackStack()
                                 }
                             )
                         }
