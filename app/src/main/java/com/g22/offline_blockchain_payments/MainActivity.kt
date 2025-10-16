@@ -39,6 +39,10 @@ class MainActivity : ComponentActivity() {
                                 scope.launch { drawerState.close() }
                                 // Navegar a pantalla de swap (por implementar)
                             },
+                            onHistoryClick = {
+                                scope.launch { drawerState.close() }
+                                // Navegar a pantalla de histórico (por implementar)
+                            },
                             onSettingsClick = {
                                 scope.launch { drawerState.close() }
                                 // Navegar a pantalla de ajustes (por implementar)

@@ -81,15 +81,23 @@ fun HomeScreen(
             
             Spacer(modifier = Modifier.height(20.dp))
             
-            // Tarjeta de Tokens
+            // Tarjeta de Tokens disponibles
             BalanceCard(
                 title = "Tokens disponibles",
                 amount = "58.200 TK"
             )
             
-            Spacer(modifier = Modifier.height(50.dp))
+            Spacer(modifier = Modifier.height(20.dp))
             
-            // Botones de acción
+            // Tarjeta de Tokens por sincronizar
+            BalanceCard(
+                title = "Tokens por sincronizar",
+                amount = "20.000 TK"
+            )
+            
+            Spacer(modifier = Modifier.height(40.dp))
+            
+            // Botones de acción (primera fila)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -110,6 +118,20 @@ fun HomeScreen(
                     iconRes = R.drawable.ic_swap,
                     text = "Intercambiar",
                     onClick = onSwapClick
+                )
+            }
+            
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            // Botón de histórico (segunda fila, centrado)
+            Box(
+                modifier = Modifier.fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ) {
+                ActionButton(
+                    iconRes = R.drawable.ic_history,
+                    text = "histórico",
+                    onClick = { /* Navegar a histórico */ }
                 )
             }
             
