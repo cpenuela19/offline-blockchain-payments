@@ -13,3 +13,4 @@ val ProfileBlue = Color(0xFF5865F2)
 // Colores adicionales
 val DarkCard = Color(0xFF1E2544)
 val TextSecondary = Color(0xFF9CA3AF)
+val EmeraldGreen = Color(0xFF2ECC71)

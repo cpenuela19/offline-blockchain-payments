@@ -34,15 +34,15 @@ fun HistoryScreen(
     onBack: () -> Unit
 ) {
     val todayTransactions = listOf(
-        Transaction("09321", "09:34 AM", "$12,000", TransactionStatus.SYNCHRONIZED),
-        Transaction("09322", "09:58 AM", "$8,000", TransactionStatus.PENDING),
-        Transaction("09323", "10:12 AM", "$5,500", TransactionStatus.PENDING)
+        Transaction("09321", "09:34 AM", "12,000 AP", TransactionStatus.SYNCHRONIZED),
+        Transaction("09322", "09:58 AM", "8,000 AP", TransactionStatus.PENDING),
+        Transaction("09323", "10:12 AM", "5,500 AP", TransactionStatus.PENDING)
     )
     
     val yesterdayTransactions = listOf(
-        Transaction("09318", "09:58 AM", "$8,000", TransactionStatus.PENDING),
-        Transaction("09319", "09:34 AM", "$12,000", TransactionStatus.SYNCHRONIZED),
-        Transaction("09320", "10:12 AM", "$5,500", TransactionStatus.PENDING)
+        Transaction("09318", "09:58 AM", "8,000 AP", TransactionStatus.PENDING),
+        Transaction("09319", "09:34 AM", "12,000 AP", TransactionStatus.SYNCHRONIZED),
+        Transaction("09320", "10:12 AM", "5,500 AP", TransactionStatus.PENDING)
     )
     
     Box(
@@ -66,7 +66,7 @@ fun HistoryScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Mis ventas (offline)",
+                    text = "Mis ventas y pagos",
                     color = White,
                     fontSize = 28.sp,
                     fontWeight = FontWeight.Normal,
@@ -100,7 +100,7 @@ fun HistoryScreen(
             TransactionSection(
                 title = "Hoy",
                 transactions = todayTransactions,
-                total = "$25,500 COP"
+                total = "25,500 AP"
             )
             
             Spacer(modifier = Modifier.height(16.dp))
@@ -109,7 +109,7 @@ fun HistoryScreen(
             TransactionSection(
                 title = "Ayer",
                 transactions = yesterdayTransactions,
-                total = "$25,500 COP"
+                total = "25,500 AP"
             )
             
             Spacer(modifier = Modifier.height(24.dp))
@@ -275,7 +275,7 @@ fun TransactionItem(transaction: Transaction) {
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "Venta #${transaction.id}",
+                    text = "Operación #${transaction.id}",
                     color = White,
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold
@@ -300,7 +300,7 @@ fun TransactionItem(transaction: Transaction) {
                 ) {
                     Text(
                         text = if (transaction.status == TransactionStatus.SYNCHRONIZED) 
-                            "Sincronizada" else "Pendiente",
+                            "Guardado correctamente" else "Pendiente por guardar",
                         color = if (transaction.status == TransactionStatus.SYNCHRONIZED) 
                             DarkNavy else LightSteelBlue,
                         fontSize = 14.sp,
