@@ -2,10 +2,14 @@ package com.g22.offline_blockchain_payments.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-val Purple80 = Color(0xFFD0BCFF)
-val PurpleGrey80 = Color(0xFFCCC2DC)
-val Pink80 = Color(0xFFEFB8C8)
+// Colores principales del diseño
+val DarkNavy = Color(0xFF1A1F3A)
+val CyanBlue = Color(0xFF00BFFF)
+val LightSteelBlue = Color(0xFFB0C4DE)
+val CardDarkBlue = Color(0xFF2A3255)
+val White = Color(0xFFFFFFFF)
+val ProfileBlue = Color(0xFF5865F2)
 
-val Purple40 = Color(0xFF6650a4)
-val PurpleGrey40 = Color(0xFF625b71)
-val Pink40 = Color(0xFF7D5260)
+// Colores adicionales
+val DarkCard = Color(0xFF1E2544)
+val TextSecondary = Color(0xFF9CA3AF)
