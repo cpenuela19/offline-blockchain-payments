@@ -7,17 +7,14 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.rememberDrawerState
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.*
 import androidx.compose.ui.graphics.Color
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.g22.offline_blockchain_payments.ui.components.DrawerMenu
-import com.g22.offline_blockchain_payments.ui.screens.HomeScreen
-import com.g22.offline_blockchain_payments.ui.screens.HistoryScreen
-import com.g22.offline_blockchain_payments.ui.screens.ReceiveScreen
-import com.g22.offline_blockchain_payments.ui.screens.SendScreen
-import com.g22.offline_blockchain_payments.ui.screens.SwapScreen
+import com.g22.offline_blockchain_payments.ui.data.Role
+import com.g22.offline_blockchain_payments.ui.screens.*
 import com.g22.offline_blockchain_payments.ui.theme.OfflineblockchainpaymentsTheme
 import kotlinx.coroutines.launch
 
@@ -30,6 +27,8 @@ class MainActivity : ComponentActivity() {
                 val navController = rememberNavController()
                 val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
                 val scope = rememberCoroutineScope()
+                var currentRole by remember { mutableStateOf(Role.BUYER) }
+                var sellerAmount by remember { mutableStateOf(0L) }
                 
                 ModalNavigationDrawer(
                     drawerState = drawerState,
@@ -37,15 +36,15 @@ class MainActivity : ComponentActivity() {
                         DrawerMenu(
                             onSendClick = {
                                 scope.launch { drawerState.close() }
-                                navController.navigate("send")
+                                navController.navigate("buyer/start")
                             },
                             onReceiveClick = {
                                 scope.launch { drawerState.close() }
-                                navController.navigate("receive")
+                                navController.navigate("seller/charge")
                             },
                             onSwapClick = {
                                 scope.launch { drawerState.close() }
-                                navController.navigate("swap")
+                                // Mantener swap por ahora
                             },
                             onHistoryClick = {
                                 scope.launch { drawerState.close() }
@@ -63,60 +62,116 @@ class MainActivity : ComponentActivity() {
                     },
                     scrimColor = Color.Black.copy(alpha = 0.5f)
                 ) {
-                    NavHost(navController = navController, startDestination = "home") {
-                        composable("home") {
-                            HomeScreen(
-                                onMenuClick = {
-                                    scope.launch { drawerState.open() }
+                    NavHost(navController = navController, startDestination = "home_minimal") {
+                        composable("home_minimal") {
+                            HomeMinimal(
+                                currentRole = currentRole,
+                                onRoleChange = { currentRole = it },
+                                onBuyClick = {
+                                    navController.navigate("buyer/start")
                                 },
-                                onSendClick = {
-                                    navController.navigate("send")
-                                },
-                                onReceiveClick = {
-                                    navController.navigate("receive")
-                                },
-                                onSwapClick = {
-                                    navController.navigate("swap")
+                                onSellClick = {
+                                    navController.navigate("seller/charge")
                                 },
                                 onHistoryClick = {
                                     navController.navigate("history")
+                                },
+                                onMenuClick = {
+                                    scope.launch { drawerState.open() }
                                 }
                             )
                         }
                         
-                        composable("send") {
-                            SendScreen(
+                        // Flujo Comprador
+                        composable("buyer/start") {
+                            BuyerStartScreen(
+                                onPayClick = {
+                                    navController.navigate("buyer/confirm")
+                                },
                                 onBack = {
                                     navController.popBackStack()
+                                },
+                                onMenuClick = {
+                                    scope.launch { drawerState.open() }
                                 }
                             )
                         }
                         
-                        composable("receive") {
-                            ReceiveScreen(
+                        composable("buyer/confirm") {
+                            BuyerConfirmScreen(
+                                amount = 12000L,
+                                destination = "Marta",
+                                onConfirm = {
+                                    navController.navigate("buyer/receipt")
+                                },
                                 onBack = {
                                     navController.popBackStack()
+                                },
+                                onMenuClick = {
+                                    scope.launch { drawerState.open() }
                                 }
                             )
                         }
                         
+                        composable("buyer/receipt") {
+                            BuyerReceiptScreen(
+                                amount = 12000L,
+                                from = "Juan P.",
+                                to = "Marta",
+                                onSave = {
+                                    // Guardar voucher (opcional - in-memory)
+                                },
+                                onClose = {
+                                    navController.navigate("home_minimal") {
+                                        popUpTo("home_minimal") { inclusive = true }
+                                    }
+                                },
+                                onMenuClick = {
+                                    scope.launch { drawerState.open() }
+                                }
+                            )
+                        }
+                        
+                        // Flujo Vendedor
+                        composable("seller/charge") {
+                            SellerChargeScreen(
+                                onContinue = { amount ->
+                                    sellerAmount = amount
+                                    navController.navigate("seller/receipt")
+                                },
+                                onBack = {
+                                    navController.popBackStack()
+                                },
+                                onMenuClick = {
+                                    scope.launch { drawerState.open() }
+                                }
+                            )
+                        }
+                        
+                        composable("seller/receipt") {
+                            SellerReceiptScreen(
+                                amount = sellerAmount,
+                                from = "Juan P.",
+                                to = "Marta",
+                                onSave = {
+                                    // Guardar voucher (opcional - in-memory)
+                                },
+                                onClose = {
+                                    navController.navigate("home_minimal") {
+                                        popUpTo("home_minimal") { inclusive = true }
+                                    }
+                                },
+                                onMenuClick = {
+                                    scope.launch { drawerState.open() }
+                                }
+                            )
+                        }
+                        
+                        // History
                         composable("history") {
                             HistoryScreen(
                                 onBack = {
                                     navController.popBackStack()
-                                }
-                            )
-                        }
-                        
-                        composable("swap") {
-                            SwapScreen(
-                                onBack = {
-                                    navController.popBackStack()
-                                },
-                                onSwapComplete = {
-                                    navController.navigate("home") {
-                                        popUpTo("home") { inclusive = true }
-                                    }
                                 }
                             )
                         }
