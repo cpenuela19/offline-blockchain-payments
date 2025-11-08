@@ -1,4 +1,4 @@
-Desde offline-blockchain-payments/backend 
+Desde o/ffline-blockchain-payments/backend 
 npm run dev
 
 
