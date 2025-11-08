@@ -4,6 +4,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import com.g22.offline_blockchain_payments.worker.SyncWorker
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.rememberDrawerState
@@ -22,6 +23,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        
+        // Inicializar SyncWorker
+        SyncWorker.enqueue(this)
+        
         setContent {
             OfflineblockchainpaymentsTheme {
                 val navController = rememberNavController()
@@ -172,6 +177,9 @@ class MainActivity : ComponentActivity() {
                             HistoryScreen(
                                 onBack = {
                                     navController.popBackStack()
+                                },
+                                onMenuClick = {
+                                    scope.launch { drawerState.open() }
                                 }
                             )
                         }

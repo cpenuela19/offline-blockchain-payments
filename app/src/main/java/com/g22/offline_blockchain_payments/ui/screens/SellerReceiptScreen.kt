@@ -5,30 +5,40 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
+import android.app.Application
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.g22.offline_blockchain_payments.R
+import com.g22.offline_blockchain_payments.ui.data.Role
 import com.g22.offline_blockchain_payments.ui.theme.*
+import com.g22.offline_blockchain_payments.ui.viewmodel.VoucherViewModel
+import com.g22.offline_blockchain_payments.ui.viewmodel.VoucherViewModelFactory
 import java.util.UUID
 
 @Composable
 fun SellerReceiptScreen(
     amount: Long,
-    from: String = "Juan P.",
+    from: String = "Juan",
     to: String = "Marta",
     voucherId: String = UUID.randomUUID().toString().take(8).uppercase(),
     onSave: () -> Unit,
     onClose: () -> Unit,
     onMenuClick: () -> Unit
 ) {
+    val context = LocalContext.current
+    val viewModel: VoucherViewModel = viewModel(
+        factory = VoucherViewModelFactory(context.applicationContext as Application)
+    )
     var isSaved by remember { mutableStateOf(false) }
     
     Box(
@@ -222,8 +232,17 @@ fun SellerReceiptScreen(
             // Botón Guardar
             Button(
                 onClick = {
-                    isSaved = true
-                    onSave()
+                    if (!isSaved) {
+                        viewModel.createVoucher(
+                            role = Role.SELLER,
+                            amountAp = amount,
+                            counterparty = from,
+                            buyerAlias = from,
+                            sellerAlias = to
+                        )
+                        isSaved = true
+                        onSave()
+                    }
                 },
                 enabled = !isSaved,
                 modifier = Modifier

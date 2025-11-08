@@ -1,55 +1,91 @@
 package com.g22.offline_blockchain_payments.ui.screens
 
+import android.app.Application
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.g22.offline_blockchain_payments.R
+import com.g22.offline_blockchain_payments.data.database.VoucherEntity
+import com.g22.offline_blockchain_payments.ui.data.VoucherStatus
 import com.g22.offline_blockchain_payments.ui.theme.*
-
-data class Transaction(
-    val id: String,
-    val time: String,
-    val amount: String,
-    val status: TransactionStatus
-)
-
-enum class TransactionStatus {
-    SYNCHRONIZED,
-    PENDING
-}
+import com.g22.offline_blockchain_payments.ui.viewmodel.VoucherViewModel
+import com.g22.offline_blockchain_payments.ui.viewmodel.VoucherViewModelFactory
+import java.text.SimpleDateFormat
+import java.util.*
 
 @Composable
 fun HistoryScreen(
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onMenuClick: () -> Unit
 ) {
-    val todayTransactions = listOf(
-        Transaction("09321", "09:34 AM", "12,000 AP", TransactionStatus.SYNCHRONIZED),
-        Transaction("09322", "09:58 AM", "8,000 AP", TransactionStatus.PENDING),
-        Transaction("09323", "10:12 AM", "5,500 AP", TransactionStatus.PENDING)
+    val context = LocalContext.current
+    val viewModel: VoucherViewModel = viewModel(
+        factory = VoucherViewModelFactory(context.applicationContext as Application)
     )
     
-    val yesterdayTransactions = listOf(
-        Transaction("09318", "09:58 AM", "8,000 AP", TransactionStatus.PENDING),
-        Transaction("09319", "09:34 AM", "12,000 AP", TransactionStatus.SYNCHRONIZED),
-        Transaction("09320", "10:12 AM", "5,500 AP", TransactionStatus.PENDING)
-    )
+    val vouchers by viewModel.allVouchers.collectAsState(initial = emptyList())
+    
+    // Agrupar vouchers por día
+    val groupedVouchers = vouchers.groupBy { voucher ->
+        val date = Date(voucher.createdAt * 1000)
+        val today = Calendar.getInstance()
+        val yesterday = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -1) }
+        val voucherCal = Calendar.getInstance().apply { time = date }
+        
+        when {
+            isSameDay(voucherCal, today) -> "Hoy"
+            isSameDay(voucherCal, yesterday) -> "Ayer"
+            else -> SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).format(date)
+        }
+    }
+    
+    val sortedKeys = groupedVouchers.keys.sortedByDescending { key ->
+        when (key) {
+            "Hoy" -> 0
+            "Ayer" -> 1
+            else -> 2
+        }
+    }
     
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(DarkNavy)
     ) {
+        // Botón de menú fijo en la esquina superior izquierda
+        IconButton(
+            onClick = onMenuClick,
+            modifier = Modifier
+                .padding(16.dp)
+                .align(Alignment.TopStart)
+        ) {
+            Icon(
+                painter = painterResource(id = R.drawable.ic_menu),
+                contentDescription = "Menú",
+                tint = White,
+                modifier = Modifier.size(24.dp)
+            )
+        }
+        
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -61,15 +97,15 @@ fun HistoryScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 20.dp),
+                    .padding(top = 16.dp),
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
                     text = "Mis ventas y pagos",
                     color = White,
-                    fontSize = 28.sp,
-                    fontWeight = FontWeight.Normal,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Medium,
                     textAlign = TextAlign.Center
                 )
             }
@@ -77,64 +113,50 @@ fun HistoryScreen(
             // Offline indicator
             Row(
                 modifier = Modifier
-                    .padding(top = 6.dp)
+                    .padding(top = 8.dp)
                     .align(Alignment.End),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Box(
                     modifier = Modifier
-                        .size(10.dp)
+                        .size(8.dp)
                         .background(CyanBlue, shape = CircleShape)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
                     text = "Offline",
                     color = LightSteelBlue,
-                    fontSize = 16.sp
+                    fontSize = 12.sp
                 )
             }
             
             Spacer(modifier = Modifier.height(16.dp))
             
-            // Sección "Hoy"
-            TransactionSection(
-                title = "Hoy",
-                transactions = todayTransactions,
-                total = "25,500 AP"
-            )
-            
-            Spacer(modifier = Modifier.height(16.dp))
-            
-            // Sección "Ayer"
-            TransactionSection(
-                title = "Ayer",
-                transactions = yesterdayTransactions,
-                total = "25,500 AP"
-            )
+            if (vouchers.isEmpty()) {
+                Text(
+                    text = "No hay operaciones registradas",
+                    color = LightSteelBlue,
+                    fontSize = 16.sp,
+                    modifier = Modifier.padding(32.dp)
+                )
+            } else {
+                // Mostrar secciones agrupadas
+                sortedKeys.forEach { key ->
+                    val dayVouchers = groupedVouchers[key]!!
+                    val total = dayVouchers.sumOf { it.amountAp }
+                    
+                    VoucherSection(
+                        title = key,
+                        vouchers = dayVouchers,
+                        total = total,
+                        context = context
+                    )
+                    
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
+            }
             
             Spacer(modifier = Modifier.height(24.dp))
-            
-            // Botón Ver más
-            Button(
-                onClick = { /* Cargar más transacciones */ },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp)
-                    .height(52.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = CyanBlue
-                ),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Text(
-                    text = "Ver más",
-                    fontSize = 28.sp,
-                    color = White,
-                    fontWeight = FontWeight.Normal
-                )
-            }
-            
-            Spacer(modifier = Modifier.height(10.dp))
             
             // Botón Volver atrás
             Button(
@@ -142,17 +164,17 @@ fun HistoryScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 8.dp)
-                    .height(52.dp),
+                    .height(56.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = DarkCard
                 ),
-                shape = RoundedCornerShape(16.dp)
+                shape = RoundedCornerShape(12.dp)
             ) {
                 Text(
                     text = "Volver atrás",
-                    fontSize = 28.sp,
+                    fontSize = 16.sp,
                     color = White,
-                    fontWeight = FontWeight.Normal
+                    fontWeight = FontWeight.Medium
                 )
             }
             
@@ -161,11 +183,17 @@ fun HistoryScreen(
     }
 }
 
+private fun isSameDay(cal1: Calendar, cal2: Calendar): Boolean {
+    return cal1.get(Calendar.YEAR) == cal2.get(Calendar.YEAR) &&
+            cal1.get(Calendar.DAY_OF_YEAR) == cal2.get(Calendar.DAY_OF_YEAR)
+}
+
 @Composable
-fun TransactionSection(
+fun VoucherSection(
     title: String,
-    transactions: List<Transaction>,
-    total: String
+    vouchers: List<VoucherEntity>,
+    total: Long,
+    context: Context
 ) {
     Column(
         modifier = Modifier.fillMaxWidth()
@@ -209,9 +237,9 @@ fun TransactionSection(
             }
         }
         
-        // Lista de transacciones
-        transactions.forEach { transaction ->
-            TransactionItem(transaction)
+        // Lista de vouchers
+        vouchers.forEach { voucher ->
+            VoucherItem(voucher, context)
         }
         
         // Total del día
@@ -222,7 +250,7 @@ fun TransactionSection(
             colors = CardDefaults.cardColors(
                 containerColor = DarkCard
             ),
-            shape = RoundedCornerShape(topStart = 0.dp, topEnd = 0.dp, bottomStart = 16.dp, bottomEnd = 16.dp)
+            shape = RoundedCornerShape(topStart = 0.dp, topEnd = 0.dp, bottomStart = 12.dp, bottomEnd = 12.dp)
         ) {
             Column(
                 modifier = Modifier
@@ -232,13 +260,13 @@ fun TransactionSection(
                 Text(
                     text = "Total del día",
                     color = LightSteelBlue,
-                    fontSize = 16.sp
+                    fontSize = 14.sp
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = total,
+                    text = "${String.format("%,d", total)} AP",
                     color = White,
-                    fontSize = 28.sp,
+                    fontSize = 24.sp,
                     fontWeight = FontWeight.Bold
                 )
             }
@@ -247,7 +275,28 @@ fun TransactionSection(
 }
 
 @Composable
-fun TransactionItem(transaction: Transaction) {
+fun VoucherItem(voucher: VoucherEntity, context: Context) {
+    val timeFormat = SimpleDateFormat("hh:mm a", Locale.getDefault())
+    val time = timeFormat.format(Date(voucher.createdAt * 1000))
+    
+    val statusText = when (voucher.status) {
+        VoucherStatus.GUARDADO_SIN_SENAL -> "Guardado sin señal"
+        VoucherStatus.ENVIANDO -> "Guardando…"
+        VoucherStatus.SUBIDO_OK -> "Guardado correctamente"
+        VoucherStatus.ERROR -> voucher.lastError ?: "Error"
+    }
+    
+    val statusColor = when (voucher.status) {
+        VoucherStatus.SUBIDO_OK -> Color(0xFF00FFB3)
+        VoucherStatus.ENVIANDO -> CyanBlue
+        else -> Color.Transparent
+    }
+    
+    val textColor = when (voucher.status) {
+        VoucherStatus.SUBIDO_OK -> DarkNavy
+        else -> LightSteelBlue
+    }
+    
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -257,67 +306,94 @@ fun TransactionItem(transaction: Transaction) {
         ),
         shape = RoundedCornerShape(0.dp)
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+                .padding(12.dp)
         ) {
-            // Información de la transacción
-            Column(
-                modifier = Modifier.weight(1f)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
+                // Información del voucher
+                Column(
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(
+                        text = time,
+                        color = LightSteelBlue,
+                        fontSize = 12.sp
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "Operación #${voucher.id.take(8)}",
+                        color = White,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                
+                // Estado
+                Box(
+                    modifier = Modifier.weight(1.2f),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .background(
+                                color = statusColor,
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = statusText,
+                            color = textColor,
+                            fontSize = 12.sp,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+                
+                // Valor
                 Text(
-                    text = transaction.time,
-                    color = LightSteelBlue,
-                    fontSize = 14.sp
-                )
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = "Operación #${transaction.id}",
+                    text = "${String.format("%,d", voucher.amountAp)} AP",
                     color = White,
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.End,
+                    modifier = Modifier.weight(0.8f)
                 )
             }
             
-            // Estado
-            Box(
-                modifier = Modifier
-                    .weight(1.2f),
-                contentAlignment = Alignment.Center
-            ) {
-                Box(
+            // Mostrar txHash si existe
+            if (voucher.txHash != null && voucher.status == VoucherStatus.SUBIDO_OK) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
                     modifier = Modifier
-                        .background(
-                            color = if (transaction.status == TransactionStatus.SYNCHRONIZED) 
-                                Color(0xFF00FFB3) else Color.Transparent,
-                            shape = RoundedCornerShape(16.dp)
-                        )
-                        .padding(horizontal = 10.dp, vertical = 4.dp),
-                    contentAlignment = Alignment.Center
+                        .fillMaxWidth()
+                        .clickable {
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            val clip = ClipData.newPlainText("txHash", voucher.txHash)
+                            clipboard.setPrimaryClip(clip)
+                        },
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = if (transaction.status == TransactionStatus.SYNCHRONIZED) 
-                            "Guardado correctamente" else "Pendiente por guardar",
-                        color = if (transaction.status == TransactionStatus.SYNCHRONIZED) 
-                            DarkNavy else LightSteelBlue,
-                        fontSize = 14.sp,
-                        textAlign = TextAlign.Center
+                        text = "Hash: ${voucher.txHash.take(8)}...${voucher.txHash.takeLast(6)}",
+                        color = CyanBlue,
+                        fontSize = 11.sp,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        text = "Tocar para copiar",
+                        color = LightSteelBlue,
+                        fontSize = 10.sp
                     )
                 }
             }
-            
-            // Valor
-            Text(
-                text = transaction.amount,
-                color = White,
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.End,
-                modifier = Modifier.weight(0.8f)
-            )
         }
     }
 }

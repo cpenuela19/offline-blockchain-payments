@@ -1,0 +1,6 @@
+node_modules/
+.env
+vouchers.db
+*.log
+.DS_Store
+
