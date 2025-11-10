@@ -64,6 +64,18 @@ const ERC20_ABI = [
 const tokenContract = new ethers.Contract(CONTRACT_ADDRESS, ERC20_ABI, wallet);
 console.log(`🔗 Contrato conectado: ${CONTRACT_ADDRESS}`);
 
+// Límites offline (pueden ajustarse por env)
+const OFFLINE_VOUCHER_MAX_AP = Number(process.env.OFFLINE_VOUCHER_MAX_AP || 200);
+const OFFLINE_BUYER_DAILY_MAX_AP = Number(process.env.OFFLINE_BUYER_DAILY_MAX_AP || 1000);
+
+let DECIMALS_CACHE = null;
+async function getDecimals() {
+  if (DECIMALS_CACHE === null) {
+    DECIMALS_CACHE = await tokenContract.decimals();
+  }
+  return DECIMALS_CACHE;
+}
+
 // ─────────────────────────── Base de datos ────────────────────────────
 const db = new sqlite3.Database('./vouchers.db', (err) => {
   if (err) {
@@ -92,8 +104,49 @@ function initDatabase() {
       console.error('Error creando tabla:', err);
     } else {
       console.log('Tabla vouchers creada/verificada');
+      migrateForOfflineSchema();
     }
   });
+}
+
+// ─────────────────────── Helpers de outbox/migraciones ───────────────────────
+function migrateForOfflineSchema() {
+  db.run(`ALTER TABLE vouchers ADD COLUMN payload_canonical TEXT`, () => {});
+  db.run(`ALTER TABLE vouchers ADD COLUMN seller_address TEXT`, () => {});
+  db.run(`ALTER TABLE vouchers ADD COLUMN buyer_address TEXT`, () => {});
+  db.run(`ALTER TABLE vouchers ADD COLUMN seller_sig TEXT`, () => {});
+  db.run(`ALTER TABLE vouchers ADD COLUMN buyer_sig TEXT`, () => {});
+  db.run(`ALTER TABLE vouchers ADD COLUMN expiry INTEGER`, () => {});
+  db.run(`ALTER TABLE vouchers ADD COLUMN asset TEXT`, () => {});
+  db.run(`ALTER TABLE vouchers ADD COLUMN amount_ap_str TEXT`, () => {});
+  db.run(`
+    CREATE TABLE IF NOT EXISTS outbox (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      offer_id TEXT NOT NULL UNIQUE,
+      state TEXT NOT NULL,
+      last_error TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `, () => {});
+}
+
+function enqueueOutbox(offer_id, cb) {
+  const ts = Math.floor(Date.now() / 1000);
+  db.run(
+    `INSERT OR IGNORE INTO outbox(offer_id, state, created_at, updated_at) VALUES(?, 'PENDING', ?, ?)`,
+    [offer_id, ts, ts],
+    cb
+  );
+}
+
+function markOutbox(offer_id, state, errMsg, cb) {
+  const ts = Math.floor(Date.now() / 1000);
+  db.run(
+    `UPDATE outbox SET state=?, last_error=?, updated_at=? WHERE offer_id=?`,
+    [state, errMsg || null, ts, offer_id],
+    cb
+  );
 }
 
 // ─────────────────────────── Alias opcionales ─────────────────────────
@@ -117,6 +170,37 @@ function resolveAddress(aliasOrAddress) {
   const addr = aliasToAddress[v];
   if (!addr) throw new Error(`ALIAS_NOT_FOUND:${v}`);
   return addr;
+}
+
+// ─────────────────────── Utilidades canónicas y firmas ───────────────────────
+function canonicalizePaymentBase(base) {
+  const required = ['offer_id', 'amount_ap', 'asset', 'expiry', 'seller_address', 'buyer_address'];
+  for (const k of required) {
+    if (base[k] === undefined || base[k] === null) throw new Error(`MISSING_${k}`);
+  }
+
+  const amountStr = String(base.amount_ap);
+  if (!/^\d+(\.\d+)?$/.test(amountStr)) throw new Error('BAD_AMOUNT_FORMAT');
+
+  const payload = {
+    asset: String(base.asset),
+    buyer_address: String(base.buyer_address).toLowerCase(),
+    expiry: Number(base.expiry),
+    offer_id: String(base.offer_id),
+    seller_address: String(base.seller_address).toLowerCase(),
+    amount_ap: amountStr
+  };
+  return JSON.stringify(payload);
+}
+
+function verifySignature(canonicalString, signature, expectedAddress) {
+  try {
+    const msgHash = ethers.hashMessage(canonicalString);
+    const recovered = ethers.recoverAddress(msgHash, signature);
+    return recovered.toLowerCase() === String(expectedAddress).toLowerCase();
+  } catch (_e) {
+    return false;
+  }
 }
 
 // ──────────────────────── Validación de request ───────────────────────
@@ -188,7 +272,7 @@ app.post('/v1/vouchers', async (req, res) => {
 
       (async () => {
         try {
-          const decimals = await tokenContract.decimals();
+          const decimals = await getDecimals();
           const amountWei = ethers.parseUnits(amount_ap.toString(), decimals);
 
           // Insert PENDING
@@ -250,6 +334,141 @@ app.post('/v1/vouchers', async (req, res) => {
   } catch (error) {
     console.error('Error en POST /v1/vouchers:', error);
     res.status(500).json({ error: 'Error interno del servidor', error_code: 'INTERNAL_ERROR' });
+  }
+});
+
+// POST /v1/vouchers/settle
+app.post('/v1/vouchers/settle', async (req, res) => {
+  try {
+    const {
+      offer_id, amount_ap, asset, expiry,
+      seller_address, seller_sig,
+      buyer_address, buyer_sig
+    } = req.body || {};
+
+    if (!offer_id || !amount_ap || !asset || !expiry || !seller_address || !seller_sig || !buyer_address || !buyer_sig) {
+      return res.status(400).json({ error_code: 'BAD_REQUEST', message: 'Missing fields' });
+    }
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(offer_id))) {
+      return res.status(400).json({ error_code: 'BAD_OFFER_ID', message: 'offer_id must be UUID v4' });
+    }
+    if (String(asset) !== 'AP') {
+      return res.status(400).json({ error_code: 'BAD_ASSET', message: 'asset must be "AP"' });
+    }
+    const now = Math.floor(Date.now() / 1000);
+    if (Number(expiry) <= now) {
+      return res.status(409).json({ error_code: 'EXPIRED', message: 'Voucher expired' });
+    }
+
+    if (!isHexAddress(seller_address) || !isHexAddress(buyer_address)) {
+      return res.status(400).json({ error_code: 'BAD_ADDRESS', message: 'seller_address y buyer_address deben ser 0x...' });
+    }
+
+    const amountNumeric = Number(amount_ap);
+    if (!Number.isFinite(amountNumeric) || amountNumeric <= 0) {
+      return res.status(400).json({ error_code: 'BAD_AMOUNT', message: 'amount_ap inválido' });
+    }
+    if (amountNumeric > OFFLINE_VOUCHER_MAX_AP) {
+      return res.status(429).json({ error_code: 'RISK_LIMITS', message: `amount_ap excede el máximo por voucher (${OFFLINE_VOUCHER_MAX_AP} AP)` });
+    }
+
+    const sellerLower = seller_address.toLowerCase();
+    const buyerLower = buyer_address.toLowerCase();
+
+    const base = {
+      offer_id,
+      amount_ap: String(amount_ap),
+      asset,
+      expiry: Number(expiry),
+      seller_address: sellerLower,
+      buyer_address: buyerLower
+    };
+    let canonical;
+    try {
+      canonical = canonicalizePaymentBase(base);
+    } catch (e) {
+      return res.status(400).json({ error_code: 'BAD_CANONICAL', message: String(e.message) });
+    }
+
+    const okSeller = verifySignature(canonical, seller_sig, sellerLower);
+    const okBuyer = verifySignature(canonical, buyer_sig, buyerLower);
+    if (!okSeller || !okBuyer) {
+      return res.status(422).json({ error_code: 'INVALID_SIGNATURE', message: 'seller_sig or buyer_sig invalid' });
+    }
+
+    const startOfDay = Math.floor(new Date().setUTCHours(0, 0, 0, 0) / 1000);
+
+    db.get(
+      `SELECT COALESCE(SUM(CAST(amount_ap_str AS REAL)), 0) AS total
+       FROM vouchers
+       WHERE LOWER(buyer_address) = ?
+         AND created_at >= ?
+         AND status IN ('SUBIDO_OK','PENDING','RECEIVED')
+         AND offer_id <> ?`,
+      [buyerLower, startOfDay, offer_id],
+      (sumErr, aggregate) => {
+        if (sumErr) {
+          console.error('Error evaluando límites de riesgo:', sumErr);
+          return res.status(500).json({ error_code: 'DB_ERROR', message: 'Risk limits check failed' });
+        }
+        const totalToday = Number(aggregate?.total || 0);
+        if (totalToday + amountNumeric > OFFLINE_BUYER_DAILY_MAX_AP) {
+          return res.status(429).json({
+            error_code: 'RISK_LIMITS',
+            message: `buyer_address excede el límite diario (${OFFLINE_BUYER_DAILY_MAX_AP} AP)`
+          });
+        }
+
+        db.get('SELECT offer_id, tx_hash, status FROM vouchers WHERE offer_id=?', [offer_id], (err, row) => {
+          if (err) return res.status(500).json({ error_code: 'DB_ERROR', message: 'DB read error' });
+
+          if (row && row.tx_hash && row.status === 'SUBIDO_OK') {
+            return res.status(200).json({ status: 'already_settled', tx_hash: row.tx_hash });
+          }
+
+          const ts = Math.floor(Date.now() / 1000);
+          const upsert = () => {
+            db.run(
+              `INSERT INTO vouchers (
+                 offer_id, amount_ap, buyer_alias, seller_alias, tx_hash, status, onchain_status, created_at, updated_at,
+                 payload_canonical, seller_address, buyer_address, seller_sig, buyer_sig, expiry, asset, amount_ap_str
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(offer_id) DO UPDATE SET
+                 payload_canonical=excluded.payload_canonical,
+                 seller_address=excluded.seller_address,
+                 buyer_address=excluded.buyer_address,
+                 seller_sig=excluded.seller_sig,
+                 buyer_sig=excluded.buyer_sig,
+                 expiry=excluded.expiry,
+                 asset=excluded.asset,
+                 amount_ap_str=excluded.amount_ap_str,
+                 updated_at=excluded.updated_at`,
+              [
+                offer_id,
+                Math.floor(amountNumeric), '', '', null,
+                'RECEIVED', 'PENDING',
+                ts, ts,
+                canonical, sellerLower, buyerLower, seller_sig, buyer_sig,
+                Number(expiry), 'AP', String(amount_ap)
+              ],
+              (insErr) => {
+                if (insErr) return res.status(500).json({ error_code: 'DB_ERROR', message: 'DB insert/update error' });
+                enqueueOutbox(offer_id, (qErr) => {
+                  if (qErr) return res.status(500).json({ error_code: 'OUTBOX_ERROR', message: 'enqueue failed' });
+                  return res.status(200).json({ status: 'queued' });
+                });
+              }
+            );
+          };
+
+          if (!row) return upsert();
+          upsert();
+        });
+      }
+    );
+  } catch (e) {
+    console.error('Error in /v1/vouchers/settle:', e);
+    return res.status(500).json({ error_code: 'INTERNAL_ERROR', message: 'Unexpected server error' });
   }
 });
 
@@ -318,7 +537,7 @@ app.get('/v1/balance/:alias', async (req, res) => {
 
     try {
       const balance = await tokenContract.balanceOf(address);
-      const decimals = await tokenContract.decimals();
+      const decimals = await getDecimals();
       const balanceFormatted = ethers.formatUnits(balance, decimals);
 
       res.status(200).json({
@@ -337,6 +556,70 @@ app.get('/v1/balance/:alias', async (req, res) => {
   }
 });
 
+async function processOutboxOnce() {
+  db.all(`
+          SELECT o.offer_id
+          FROM outbox o
+          WHERE o.state='PENDING'
+             OR (o.state='FAILED' AND (strftime('%s','now') - o.updated_at) >= 60)
+          LIMIT 10
+        `, [], async (err, pendings) => {
+    if (err || !pendings || pendings.length === 0) return;
+
+    for (const row of pendings) {
+      const offer_id = row.offer_id;
+      db.get(`SELECT * FROM vouchers WHERE offer_id=?`, [offer_id], async (e, v) => {
+        if (e || !v) {
+          markOutbox(offer_id, 'FAILED', 'VOUCHER_NOT_FOUND', () => {});
+          return;
+        }
+
+        if (v.tx_hash && (v.status === 'SUBIDO_OK' || v.onchain_status === 'CONFIRMED')) {
+          markOutbox(offer_id, 'SENT', null, () => {});
+          return;
+        }
+
+        try {
+          const decimals = await getDecimals();
+          const amountStr = v.amount_ap_str;
+          if (!amountStr) {
+            markOutbox(offer_id, 'FAILED', 'MISSING_amount_ap_str', () => {});
+            return;
+          }
+          const amountWei = ethers.parseUnits(amountStr, decimals);
+
+          const to = v.seller_address;
+          if (!to || !/^0x[a-fA-F0-9]{40}$/.test(to)) {
+            markOutbox(offer_id, 'FAILED', 'BAD_SELLER_ADDRESS', () => {});
+            return;
+          }
+
+          const tx = await tokenContract.transfer(to, amountWei);
+          const ts0 = Math.floor(Date.now() / 1000);
+          db.run(
+            `UPDATE vouchers SET tx_hash=?, status=?, onchain_status=?, updated_at=? WHERE offer_id=?`,
+            [tx.hash, 'PENDING', 'PENDING', ts0, offer_id],
+            () => {}
+          );
+
+          await tx.wait(CONFIRMATIONS);
+          const ts1 = Math.floor(Date.now() / 1000);
+          db.run(
+            `UPDATE vouchers SET status=?, onchain_status=?, updated_at=? WHERE offer_id=?`,
+            ['SUBIDO_OK', 'CONFIRMED', ts1, offer_id],
+            () => {}
+          );
+          markOutbox(offer_id, 'SENT', null, () => {});
+        } catch (errTx) {
+          markOutbox(offer_id, 'FAILED', String(errTx && errTx.message || errTx), () => {});
+        }
+      });
+    }
+  });
+}
+
+setInterval(processOutboxOnce, 10000);
+
 // Health check
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'OK', timestamp: Date.now() });
@@ -347,5 +630,29 @@ app.listen(PORT, () => {
   console.log(`RPCs activos:`);
   urls.forEach((u, i) => console.log(`  [${i + 1}] ${u}`));
   console.log(`Contrato: ${CONTRACT_ADDRESS}`);
+  processOutboxOnce();
+});
+
+
+// SOLO PARA DEBUG — bórralo en prod
+app.post('/v1/debug/canonical', (req, res) => {
+  try {
+    const {
+      offer_id, amount_ap, asset, expiry,
+      seller_address, buyer_address
+    } = req.body || {};
+    const base = {
+      offer_id: String(offer_id),
+      amount_ap: String(amount_ap),
+      asset: String(asset),
+      expiry: Number(expiry),
+      seller_address: String(seller_address).toLowerCase(),
+      buyer_address: String(buyer_address).toLowerCase()
+    };
+    const canonical = canonicalizePaymentBase(base);
+    res.status(200).json({ canonical });
+  } catch (e) {
+    res.status(400).json({ error: String(e.message) });
+  }
 });
 
