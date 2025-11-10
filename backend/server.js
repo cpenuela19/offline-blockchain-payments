@@ -63,6 +63,9 @@ urls.forEach((u, i) => console.log(`   [${i + 1}] ${u}`));
 // ABI mínimo del ERC-20
 const ERC20_ABI = [
   "function transfer(address to, uint256 amount) external returns (bool)",
+  "function transferFrom(address from, address to, uint256 amount) external returns (bool)",
+  "function approve(address spender, uint256 amount) external returns (bool)",
+  "function allowance(address owner, address spender) external view returns (uint256)",
   "function balanceOf(address account) external view returns (uint256)",
   "function decimals() external view returns (uint8)"
 ];
@@ -587,21 +590,75 @@ async function processOutboxOnce() {
         }
 
         try {
+          // v: registro del voucher ya leído de la DB
           const decimals = await getDecimals();
           const amountStr = v.amount_ap_str;
-          if (!amountStr) {
-            markOutbox(offer_id, 'FAILED', 'MISSING_amount_ap_str', () => {});
-            return;
-          }
-          const amountWei = ethers.parseUnits(amountStr, decimals);
+          if (!amountStr) { markOutbox(offer_id, 'FAILED', 'MISSING_amount_ap_str', () => {}); return; }
 
-          const to = v.seller_address;
-          if (!to || !/^0x[a-fA-F0-9]{40}$/.test(to)) {
+          const amountWei = ethers.parseUnits(String(amountStr), decimals);
+
+          const to = (v.seller_address || '').toLowerCase();
+          const from = (v.buyer_address  || '').toLowerCase();
+
+          if (!/^0x[a-fA-F0-9]{40}$/.test(to)) {
             markOutbox(offer_id, 'FAILED', 'BAD_SELLER_ADDRESS', () => {});
             return;
           }
+          if (!/^0x[a-fA-F0-9]{40}$/.test(from)) {
+            markOutbox(offer_id, 'FAILED', 'BAD_BUYER_ADDRESS', () => {});
+            return;
+          }
 
-          const tx = await tokenContract.transfer(to, amountWei);
+          // 1) chequear allowance A->madre
+          let allowanceAB;
+          try {
+            allowanceAB = await tokenContract.allowance(from, wallet.address);
+          } catch (e) {
+            markOutbox(offer_id, 'FAILED', `ALLOWANCE_ERROR:${String(e?.message || e)}`, () => {});
+            return;
+          }
+          if (allowanceAB < amountWei) {
+            markOutbox(offer_id, 'FAILED', 'INSUFFICIENT_ALLOWANCE', () => {});
+            return;
+          }
+
+          // 2) chequear saldo real de A (por seguridad explícita antes del tx)
+          let balanceA;
+          try {
+            balanceA = await tokenContract.balanceOf(from);
+          } catch (e) {
+            markOutbox(offer_id, 'FAILED', `BALANCE_READ_ERROR:${String(e?.message || e)}`, () => {});
+            return;
+          }
+          if (balanceA < amountWei) {
+            markOutbox(offer_id, 'FAILED', 'INSUFFICIENT_BUYER_BALANCE', () => {});
+            return;
+          }
+
+          // 3) opcional: chequear gas de la madre (ETH)
+          //    si quieres, usa un umbral simple:
+          try {
+            const ethMother = await provider.getBalance(wallet.address);
+            const minGas = ethers.parseUnits("0.00002", "ether");
+            if (ethMother < minGas) {
+              markOutbox(offer_id, 'FAILED', 'MOTHER_GAS_INSUFFICIENT', () => {});
+              return;
+            }
+          } catch (e) {
+            // si falla lectura de gas, puedes continuar o marcar error; aquí continuamos
+          }
+
+          // 4) ejecutar transferFrom(A -> B) — la madre es msg.sender y paga el gas
+          let tx;
+          try {
+            console.log(`Ejecutando transferFrom(${from} -> ${to}) offer_id=${offer_id} amountWei=${amountWei}`);
+            tx = await tokenContract.transferFrom(from, to, amountWei);
+          } catch (e) {
+            markOutbox(offer_id, 'FAILED', `TRANSFER_FROM_ERROR:${String(e?.message || e)}`, () => {});
+            return;
+          }
+
+          // 5) actualizar DB estados y esperar confirmación
           const ts0 = Math.floor(Date.now() / 1000);
           db.run(
             `UPDATE vouchers SET tx_hash=?, status=?, onchain_status=?, updated_at=? WHERE offer_id=?`,
@@ -609,14 +666,18 @@ async function processOutboxOnce() {
             () => {}
           );
 
-          await tx.wait(CONFIRMATIONS);
-          const ts1 = Math.floor(Date.now() / 1000);
-          db.run(
-            `UPDATE vouchers SET status=?, onchain_status=?, updated_at=? WHERE offer_id=?`,
-            ['SUBIDO_OK', 'CONFIRMED', ts1, offer_id],
-            () => {}
-          );
-          markOutbox(offer_id, 'SENT', null, () => {});
+          try {
+            await tx.wait(CONFIRMATIONS);
+            const ts1 = Math.floor(Date.now() / 1000);
+            db.run(
+              `UPDATE vouchers SET status=?, onchain_status=?, updated_at=? WHERE offer_id=?`,
+              ['SUBIDO_OK', 'CONFIRMED', ts1, offer_id],
+              () => {}
+            );
+            markOutbox(offer_id, 'SENT', null, () => {});
+          } catch (waitErr) {
+            markOutbox(offer_id, 'FAILED', `CONFIRM_ERROR:${String(waitErr?.message || waitErr)}`, () => {});
+          }
         } catch (errTx) {
           markOutbox(offer_id, 'FAILED', String(errTx && errTx.message || errTx), () => {});
         }
