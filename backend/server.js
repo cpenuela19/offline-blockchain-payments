@@ -38,14 +38,21 @@ if (!PRIVATE_KEY || !CONTRACT_ADDRESS || urls.length === 0) {
   process.exit(1);
 }
 
-// Crear proveedor con fallback automático
+// Crear proveedor con fallback automático (red fijada para evitar "failed to detect network")
+const sepoliaNet = ethers.Network.from(11155111); // o usa CHAIN_ID si quieres: ethers.Network.from(CHAIN_ID)
+
 const fallbacks = urls.map((u) => ({
-  provider: new ethers.JsonRpcProvider(u, CHAIN_ID),
+  provider: new ethers.JsonRpcProvider(
+    u,
+    sepoliaNet,                 // fija la red (evita auto-detección)
+    { staticNetwork: sepoliaNet } // desactiva el sondeo de red
+  ),
   weight: 1,
-  stallTimeout: 1000, // si el 1° falla o demora >1s, intenta el siguiente
+  stallTimeout: 1500, // pequeño margen más alto
 }));
 
 const provider = new ethers.FallbackProvider(fallbacks);
+
 
 // Conectar la wallet (cuenta madre)
 const wallet = new ethers.Wallet(PRIVATE_KEY, provider);

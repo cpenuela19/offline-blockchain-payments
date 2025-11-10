@@ -1,8 +1,10 @@
+import { randomUUID } from "crypto";
+
 // settle-now.js — firma y envía /v1/vouchers/settle en un paso
 const { Wallet } = require("ethers");
 
 // Datos de prueba 
-const OFFER_ID = "94286bee-5deb-45dc-a2aa-35f6d1d8cf8e";
+const OFFER_ID = randomUUID();
 const AMOUNT_AP = "100";
 const ASSET = "AP";
 const EXPIRY = 2000000000;
