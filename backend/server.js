@@ -590,75 +590,60 @@ async function processOutboxOnce() {
         }
 
         try {
-          // v: registro del voucher ya leído de la DB
+          // --- dentro de processOutboxOnce(), justo antes de firmar la tx ---
           const decimals = await getDecimals();
-          const amountStr = v.amount_ap_str;
-          if (!amountStr) { markOutbox(offer_id, 'FAILED', 'MISSING_amount_ap_str', () => {}); return; }
 
-          const amountWei = ethers.parseUnits(String(amountStr), decimals);
-
-          const to = (v.seller_address || '').toLowerCase();
-          const from = (v.buyer_address  || '').toLowerCase();
-
-          if (!/^0x[a-fA-F0-9]{40}$/.test(to)) {
-            markOutbox(offer_id, 'FAILED', 'BAD_SELLER_ADDRESS', () => {});
+          const amountStr = v.amount_ap_str;               // viene de /settle
+          if (!amountStr) {
+            markOutbox(offer_id, 'FAILED', 'MISSING_amount_ap_str', () => {});
             return;
           }
+          const requested = ethers.parseUnits(String(amountStr), decimals);
+
+          const from = v.buyer_address;                    // A
+          const to   = v.seller_address;                   // B
+
           if (!/^0x[a-fA-F0-9]{40}$/.test(from)) {
             markOutbox(offer_id, 'FAILED', 'BAD_BUYER_ADDRESS', () => {});
             return;
           }
-
-          // 1) chequear allowance A->madre
-          let allowanceAB;
-          try {
-            allowanceAB = await tokenContract.allowance(from, wallet.address);
-          } catch (e) {
-            markOutbox(offer_id, 'FAILED', `ALLOWANCE_ERROR:${String(e?.message || e)}`, () => {});
-            return;
-          }
-          if (allowanceAB < amountWei) {
-            markOutbox(offer_id, 'FAILED', 'INSUFFICIENT_ALLOWANCE', () => {});
+          if (!/^0x[a-fA-F0-9]{40}$/.test(to)) {
+            markOutbox(offer_id, 'FAILED', 'BAD_SELLER_ADDRESS', () => {});
             return;
           }
 
-          // 2) chequear saldo real de A (por seguridad explícita antes del tx)
-          let balanceA;
-          try {
-            balanceA = await tokenContract.balanceOf(from);
-          } catch (e) {
-            markOutbox(offer_id, 'FAILED', `BALANCE_READ_ERROR:${String(e?.message || e)}`, () => {});
+          // Chequear balance y allowance de A
+          const [balanceA, allowanceAB] = await Promise.all([
+            tokenContract.balanceOf(from),
+            tokenContract.allowance(from, wallet.address)   // madre como spender
+          ]);
+
+          // Regla estricta: NO enviar si no alcanza (nunca “todo” ni parciales).
+          if (balanceA < requested) {
+            markOutbox(offer_id, 'FAILED', `INSUFFICIENT_BALANCE:have=${balanceA.toString()} need=${requested.toString()}`, () => {});
             return;
           }
-          if (balanceA < amountWei) {
-            markOutbox(offer_id, 'FAILED', 'INSUFFICIENT_BUYER_BALANCE', () => {});
+          if (allowanceAB < requested) {
+            markOutbox(offer_id, 'FAILED', `INSUFFICIENT_ALLOWANCE:have=${allowanceAB.toString()} need=${requested.toString()}`, () => {});
             return;
           }
 
-          // 3) opcional: chequear gas de la madre (ETH)
-          //    si quieres, usa un umbral simple:
-          try {
-            const ethMother = await provider.getBalance(wallet.address);
-            const minGas = ethers.parseUnits("0.00002", "ether");
-            if (ethMother < minGas) {
-              markOutbox(offer_id, 'FAILED', 'MOTHER_GAS_INSUFFICIENT', () => {});
-              return;
-            }
-          } catch (e) {
-            // si falla lectura de gas, puedes continuar o marcar error; aquí continuamos
-          }
+          // Log defensivo para auditoría
+          console.log(`[OUTBOX] offer_id=${offer_id}`);
+          console.log(`  from(A)=${from} balanceA=${balanceA.toString()}`);
+          console.log(`  to(B)  =${to}   allowanceAB=${allowanceAB.toString()}`);
+          console.log(`  requestedWei=${requested.toString()}`);
 
-          // 4) ejecutar transferFrom(A -> B) — la madre es msg.sender y paga el gas
+          // Ejecutar exactamente el monto solicitado
           let tx;
           try {
-            console.log(`Ejecutando transferFrom(${from} -> ${to}) offer_id=${offer_id} amountWei=${amountWei}`);
-            tx = await tokenContract.transferFrom(from, to, amountWei);
+            tx = await tokenContract.transferFrom(from, to, requested);
           } catch (e) {
             markOutbox(offer_id, 'FAILED', `TRANSFER_FROM_ERROR:${String(e?.message || e)}`, () => {});
             return;
           }
 
-          // 5) actualizar DB estados y esperar confirmación
+          // Persistir hash PENDING
           const ts0 = Math.floor(Date.now() / 1000);
           db.run(
             `UPDATE vouchers SET tx_hash=?, status=?, onchain_status=?, updated_at=? WHERE offer_id=?`,
@@ -666,6 +651,7 @@ async function processOutboxOnce() {
             () => {}
           );
 
+          // Esperar confirmaciones
           try {
             await tx.wait(CONFIRMATIONS);
             const ts1 = Math.floor(Date.now() / 1000);

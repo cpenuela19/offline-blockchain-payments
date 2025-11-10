@@ -1,21 +1,18 @@
-// backend/drip-to-a.js
-// Goteo de ETH Sepolia desde la madre → A para que A pueda firmar approve().
-// Evita FallbackProvider (que rompe si un RPC reporta chainId distinto).
-// Selecciona un RPC que confirme CHAIN_ID con sonda + reintentos.
+// backend/drip-to-b.js
+// Goteo de ETH Sepolia desde la madre → B (para que B pueda firmar approve()).
+// Evita FallbackProvider (que rompe si algún RPC devuelve chainId distinto).
+// En su lugar, selecciona un RPC válido (chainId == CHAIN_ID) con sondas + reintentos.
 // .env necesarios:
 //   RPC_URL_PRIMARY, RPC_URL_SECONDARY  (opcionales: RPC_URL_TERTIARY, RPC_URL_QUATERNARY)
 //   CHAIN_ID=11155111
 //   PRIVATE_KEY_CUENTA_MADRE=0x...
-//   PRIV_KEY_A=0x...  (o A_ADDRESS=0x...)
-//   (opcionales) DRIP_A_AMOUNT_ETH / DRIP_AMOUNT_ETH, MIN_A_TARGET_ETH / MIN_TARGET_ETH
-//
-// Uso:
-//   node backend/drip-to-a.js
+//   PRIV_KEY_B=0x...  (o B_ADDRESS=0x...)
+//   (opcionales) DRIP_B_AMOUNT_ETH / DRIP_AMOUNT_ETH, MIN_B_TARGET_ETH / MIN_TARGET_ETH
 
 require('dotenv').config();
 const { ethers } = require('ethers');
 
-const CHAIN_ID   = parseInt(process.env.CHAIN_ID || '11155111', 10);
+const CHAIN_ID = parseInt(process.env.CHAIN_ID || '11155111', 10);
 const MOTHER_PRIV = process.env.PRIVATE_KEY_CUENTA_MADRE;
 
 // URLs en orden de prioridad
@@ -26,22 +23,22 @@ const URLS = [
   process.env.RPC_URL_QUATERNARY
 ].filter(Boolean);
 
-// Resolver A
-let A_ADDR = process.env.A_ADDRESS;
-if (process.env.PRIV_KEY_A) {
-  try { A_ADDR = new ethers.Wallet(process.env.PRIV_KEY_A).address; } catch (_) {}
+// Resolver B
+let B_ADDR = process.env.B_ADDRESS;
+if (process.env.PRIV_KEY_B) {
+  try { B_ADDR = new ethers.Wallet(process.env.PRIV_KEY_B).address; } catch (_) {}
 }
 
 if (URLS.length === 0) {
   console.error('Faltan RPC_URL_* en .env'); process.exit(1);
 }
-if (!MOTHER_PRIV || !A_ADDR) {
-  console.error('Faltan PRIVATE_KEY_CUENTA_MADRE y PRIV_KEY_A (o A_ADDRESS) en .env'); process.exit(1);
+if (!MOTHER_PRIV || !B_ADDR) {
+  console.error('Faltan PRIVATE_KEY_CUENTA_MADRE y PRIV_KEY_B (o B_ADDRESS) en .env'); process.exit(1);
 }
 
-// Parámetros de goteo
-const DRIP_AMOUNT_ETH = process.env.DRIP_A_AMOUNT_ETH || process.env.DRIP_AMOUNT_ETH || '0.00020';
-const MIN_TARGET_ETH  = process.env.MIN_A_TARGET_ETH  || process.env.MIN_TARGET_ETH  || '0.00005';
+// Configuración de goteo
+const DRIP_AMOUNT_ETH = process.env.DRIP_B_AMOUNT_ETH || process.env.DRIP_AMOUNT_ETH || '0.00020';
+const MIN_TARGET_ETH  = process.env.MIN_B_TARGET_ETH  || process.env.MIN_TARGET_ETH  || '0.00005';
 
 // Reintentos/backoff
 const MAX_RETRIES   = parseInt(process.env.DRIP_RPC_MAX_RETRIES || '5', 10);
@@ -54,9 +51,9 @@ function isRateLimit(e) {
   return msg.includes('Too Many Requests') || code === -32005 || code === 'SERVER_ERROR';
 }
 
-// Selección de provider que confirme CHAIN_ID
+// Selecciona un provider que confirme CHAIN_ID
 async function pickProvider() {
-  console.log('Sondeando RPCs (esperado chainId =', CHAIN_ID, ')');
+  console.log('Sondeando RPCs (esperando chainId =', CHAIN_ID, ')');
   for (const u of URLS) {
     try {
       const p = new ethers.JsonRpcProvider(u);
@@ -105,34 +102,34 @@ async function pickProvider() {
 
   console.log('Red esperada (CHAIN_ID):', CHAIN_ID);
   console.log('Madre:', mother.address, '(MOTHER_ADDRESS=', process.env.MOTHER_ADDRESS || 'N/A', ')');
-  console.log('A    :', A_ADDR);
+  console.log('B    :', B_ADDR);
 
-  const balA0 = await getBalanceRetry(A_ADDR);
+  const balB0 = await getBalanceRetry(B_ADDR);
   const balM0 = await getBalanceRetry(mother.address);
 
   console.log('Balance madre (ETH) antes:', ethers.formatEther(balM0));
-  console.log('Balance A (ETH) antes   :', ethers.formatEther(balA0));
+  console.log('Balance B (ETH) antes   :', ethers.formatEther(balB0));
 
   const need   = ethers.parseEther(MIN_TARGET_ETH);
-  if (balA0 >= need) {
-    console.log('A ya tiene ETH suficiente para approve(); no se envía nada.');
+  if (balB0 >= need) {
+    console.log('B ya tiene ETH suficiente para approve(); no se envía nada.');
     return;
   }
 
   const amount = ethers.parseEther(DRIP_AMOUNT_ETH);
   if (balM0 <= amount) { console.error('Saldo insuficiente en madre para goteo'); process.exit(1); }
 
-  const tx = await sendTxRetry({ to: A_ADDR, value: amount });
+  const tx = await sendTxRetry({ to: B_ADDR, value: amount });
   console.log('Drip tx hash:', tx.hash);
   await tx.wait(1);
 
-  const balA1 = await getBalanceRetry(A_ADDR);
+  const balB1 = await getBalanceRetry(B_ADDR);
   const balM1 = await getBalanceRetry(mother.address);
 
   console.log('Balance madre (ETH) después:', ethers.formatEther(balM1));
-  console.log('Balance A (ETH) después   :', ethers.formatEther(balA1));
-  console.log('Listo: A tiene ETH para firmar approve().');
+  console.log('Balance B (ETH) después   :', ethers.formatEther(balB1));
+  console.log('Listo: B tiene ETH para firmar approve().');
 })().catch(e => {
-  console.error('ERROR drip-to-a:', e?.message || e);
+  console.error('ERROR drip-to-b:', e?.message || e);
   process.exit(1);
 });
