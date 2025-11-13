@@ -5,7 +5,11 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "drip": "node backend/drip-to-a.js",
+    "approve": "node backend/setTransaction.js approve",
+    "settle": "node backend/setTransaction.js settle",
+    "refund": "node backend/refund-eth-to-mother.js"
   },
   "keywords": ["blockchain", "ethereum", "erc20"],
   "author": "",

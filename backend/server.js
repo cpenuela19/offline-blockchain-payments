@@ -1,4 +1,7 @@
-require('dotenv').config();
+// Cargar .env desde la raíz del proyecto o desde backend/
+const path = require('path');
+require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
+require('dotenv').config({ path: path.resolve(__dirname, '.env') }); // Fallback a backend/.env
 const express = require('express');
 const cors = require('cors');
 const { ethers } = require('ethers');
@@ -63,6 +66,9 @@ urls.forEach((u, i) => console.log(`   [${i + 1}] ${u}`));
 // ABI mínimo del ERC-20
 const ERC20_ABI = [
   "function transfer(address to, uint256 amount) external returns (bool)",
+  "function transferFrom(address from, address to, uint256 amount) external returns (bool)",
+  "function approve(address spender, uint256 amount) external returns (bool)",
+  "function allowance(address owner, address spender) external view returns (uint256)",
   "function balanceOf(address account) external view returns (uint256)",
   "function decimals() external view returns (uint8)"
 ];
@@ -567,60 +573,168 @@ async function processOutboxOnce() {
   db.all(`
           SELECT o.offer_id
           FROM outbox o
-          WHERE o.state='PENDING'
+          WHERE (o.state='PENDING'
              OR (o.state='FAILED' AND (strftime('%s','now') - o.updated_at) >= 60)
+             OR (o.state='PROCESSING' AND (strftime('%s','now') - o.updated_at) >= 300))
           LIMIT 10
         `, [], async (err, pendings) => {
     if (err || !pendings || pendings.length === 0) return;
 
     for (const row of pendings) {
       const offer_id = row.offer_id;
-      db.get(`SELECT * FROM vouchers WHERE offer_id=?`, [offer_id], async (e, v) => {
-        if (e || !v) {
-          markOutbox(offer_id, 'FAILED', 'VOUCHER_NOT_FOUND', () => {});
-          return;
-        }
-
-        if (v.tx_hash && (v.status === 'SUBIDO_OK' || v.onchain_status === 'CONFIRMED')) {
-          markOutbox(offer_id, 'SENT', null, () => {});
-          return;
-        }
-
-        try {
-          const decimals = await getDecimals();
-          const amountStr = v.amount_ap_str;
-          if (!amountStr) {
-            markOutbox(offer_id, 'FAILED', 'MISSING_amount_ap_str', () => {});
+      
+      // Marcar como PROCESSING inmediatamente para evitar procesamiento duplicado
+      // Usar una actualización atómica que solo funciona si el estado es PENDING, FAILED o PROCESSING (stale)
+      db.run(
+        `UPDATE outbox SET state='PROCESSING', updated_at=strftime('%s','now') 
+         WHERE offer_id=? AND (
+           state='PENDING' 
+           OR (state='FAILED' AND (strftime('%s','now') - updated_at) >= 60)
+           OR (state='PROCESSING' AND (strftime('%s','now') - updated_at) >= 300)
+         )`,
+        [offer_id],
+        function(updateErr) {
+          if (updateErr) {
+            console.error(`[OUTBOX] Error marcando PROCESSING para ${offer_id}:`, updateErr);
             return;
           }
-          const amountWei = ethers.parseUnits(amountStr, decimals);
-
-          const to = v.seller_address;
-          if (!to || !/^0x[a-fA-F0-9]{40}$/.test(to)) {
-            markOutbox(offer_id, 'FAILED', 'BAD_SELLER_ADDRESS', () => {});
+          
+          // Si no se actualizó ninguna fila, significa que otro proceso ya lo está procesando
+          if (this.changes === 0) {
             return;
           }
 
-          const tx = await tokenContract.transfer(to, amountWei);
-          const ts0 = Math.floor(Date.now() / 1000);
-          db.run(
-            `UPDATE vouchers SET tx_hash=?, status=?, onchain_status=?, updated_at=? WHERE offer_id=?`,
-            [tx.hash, 'PENDING', 'PENDING', ts0, offer_id],
-            () => {}
-          );
+          // Ahora procesar el voucher
+          db.get(`SELECT * FROM vouchers WHERE offer_id=?`, [offer_id], async (e, v) => {
+            if (e || !v) {
+              markOutbox(offer_id, 'FAILED', 'VOUCHER_NOT_FOUND', () => {});
+              return;
+            }
 
-          await tx.wait(CONFIRMATIONS);
-          const ts1 = Math.floor(Date.now() / 1000);
-          db.run(
-            `UPDATE vouchers SET status=?, onchain_status=?, updated_at=? WHERE offer_id=?`,
-            ['SUBIDO_OK', 'CONFIRMED', ts1, offer_id],
-            () => {}
-          );
-          markOutbox(offer_id, 'SENT', null, () => {});
-        } catch (errTx) {
-          markOutbox(offer_id, 'FAILED', String(errTx && errTx.message || errTx), () => {});
+            // Verificar si ya existe una transacción (incluso si está pendiente)
+            if (v.tx_hash) {
+              // Si ya tiene tx_hash, verificar el estado on-chain
+              if (v.status === 'SUBIDO_OK' || v.onchain_status === 'CONFIRMED') {
+                markOutbox(offer_id, 'SENT', null, () => {});
+                return;
+              }
+              // Si tiene tx_hash pero está pendiente, no crear otra transacción
+              // Solo marcar como SENT si se confirma, o dejar PROCESSING para reintentar
+              console.log(`[OUTBOX] offer_id=${offer_id} ya tiene tx_hash=${v.tx_hash}, esperando confirmación`);
+              return;
+            }
+
+            try {
+              // --- dentro de processOutboxOnce(), justo antes de firmar la tx ---
+              const decimals = await getDecimals();
+
+              const amountStr = v.amount_ap_str;               // viene de /settle
+              if (!amountStr) {
+                markOutbox(offer_id, 'FAILED', 'MISSING_amount_ap_str', () => {});
+                return;
+              }
+              const requested = ethers.parseUnits(String(amountStr), decimals);
+
+              const from = v.buyer_address;                    // A
+              const to   = v.seller_address;                   // B
+
+              if (!/^0x[a-fA-F0-9]{40}$/.test(from)) {
+                markOutbox(offer_id, 'FAILED', 'BAD_BUYER_ADDRESS', () => {});
+                return;
+              }
+              if (!/^0x[a-fA-F0-9]{40}$/.test(to)) {
+                markOutbox(offer_id, 'FAILED', 'BAD_SELLER_ADDRESS', () => {});
+                return;
+              }
+
+              // Chequear balance y allowance de A
+              const [balanceA, allowanceAB] = await Promise.all([
+                tokenContract.balanceOf(from),
+                tokenContract.allowance(from, wallet.address)   // madre como spender
+              ]);
+
+              // Regla estricta: NO enviar si no alcanza (nunca "todo" ni parciales).
+              if (balanceA < requested) {
+                markOutbox(offer_id, 'FAILED', `INSUFFICIENT_BALANCE:have=${balanceA.toString()} need=${requested.toString()}`, () => {});
+                return;
+              }
+              if (allowanceAB < requested) {
+                markOutbox(offer_id, 'FAILED', `INSUFFICIENT_ALLOWANCE:have=${allowanceAB.toString()} need=${requested.toString()}`, () => {});
+                return;
+              }
+
+              // Log defensivo para auditoría
+              console.log(`[OUTBOX] offer_id=${offer_id}`);
+              console.log(`  from(A)=${from} balanceA=${balanceA.toString()}`);
+              console.log(`  to(B)  =${to}   allowanceAB=${allowanceAB.toString()}`);
+              console.log(`  amount_ap_str="${amountStr}"`);
+              console.log(`  requestedWei=${requested.toString()}`);
+              
+              // Validación adicional: verificar que requested no sea igual al balance completo
+              if (requested.toString() === balanceA.toString()) {
+                console.error(`⚠️  ADVERTENCIA: El monto solicitado (${requested.toString()}) es igual al balance total (${balanceA.toString()})`);
+                console.error(`   Esto podría indicar un error. Verificando amount_ap_str: "${amountStr}"`);
+              }
+              
+              // Convertir a formato legible para logs
+              const requestedFormatted = ethers.formatUnits(requested, decimals);
+              const balanceAFormatted = ethers.formatUnits(balanceA, decimals);
+              console.log(`  Monto solicitado: ${requestedFormatted} AP`);
+              console.log(`  Balance disponible: ${balanceAFormatted} AP`);
+
+              // Ejecutar exactamente el monto solicitado
+              let tx;
+              try {
+                console.log(`  🚀 Ejecutando transferFrom(${from}, ${to}, ${requested.toString()})`);
+                tx = await tokenContract.transferFrom(from, to, requested);
+              } catch (e) {
+                markOutbox(offer_id, 'FAILED', `TRANSFER_FROM_ERROR:${String(e?.message || e)}`, () => {});
+                return;
+              }
+
+              // Persistir hash PENDING inmediatamente para evitar duplicados
+              const ts0 = Math.floor(Date.now() / 1000);
+              db.run(
+                `UPDATE vouchers SET tx_hash=?, status=?, onchain_status=?, updated_at=? WHERE offer_id=?`,
+                [tx.hash, 'PENDING', 'PENDING', ts0, offer_id],
+                () => {}
+              );
+
+              // Esperar confirmaciones
+              try {
+                const receipt = await tx.wait(CONFIRMATIONS);
+                const ts1 = Math.floor(Date.now() / 1000);
+                
+                // Verificar balances después de la transacción
+                const [balanceFromAfter, balanceToAfter] = await Promise.all([
+                  tokenContract.balanceOf(from),
+                  tokenContract.balanceOf(to)
+                ]);
+                
+                console.log(`  ✅ Transacción confirmada: ${tx.hash}`);
+                console.log(`  Balance FROM después: ${ethers.formatUnits(balanceFromAfter, decimals)} AP`);
+                console.log(`  Balance TO después: ${ethers.formatUnits(balanceToAfter, decimals)} AP`);
+                
+                if (receipt.status !== 1) {
+                  console.error(`  ⚠️  Receipt status: ${receipt.status} (debería ser 1)`);
+                }
+                
+                db.run(
+                  `UPDATE vouchers SET status=?, onchain_status=?, updated_at=? WHERE offer_id=?`,
+                  ['SUBIDO_OK', 'CONFIRMED', ts1, offer_id],
+                  () => {}
+                );
+                markOutbox(offer_id, 'SENT', null, () => {});
+              } catch (waitErr) {
+                console.error(`  ❌ Error esperando confirmación: ${waitErr?.message || waitErr}`);
+                markOutbox(offer_id, 'FAILED', `CONFIRM_ERROR:${String(waitErr?.message || waitErr)}`, () => {});
+              }
+            } catch (errTx) {
+              markOutbox(offer_id, 'FAILED', String(errTx && errTx.message || errTx), () => {});
+            }
+          });
         }
-      });
+      );
     }
   });
 }
@@ -637,10 +751,14 @@ app.listen(PORT, () => {
   console.log(`RPCs activos:`);
   urls.forEach((u, i) => console.log(`  [${i + 1}] ${u}`));
   console.log(`Contrato: ${CONTRACT_ADDRESS}`);
+  console.log(`📊 Límites configurados:`);
+  console.log(`   - Máximo por voucher: ${OFFLINE_VOUCHER_MAX_AP} AP`);
+  console.log(`   - Máximo diario por buyer: ${OFFLINE_BUYER_DAILY_MAX_AP} AP`);
   processOutboxOnce();
 });
 
 
+// ──────────────────────────── DEBUG ENDPOINTS ────────────────────────────
 // SOLO PARA DEBUG — bórralo en prod
 app.post('/v1/debug/canonical', (req, res) => {
   try {
@@ -660,6 +778,107 @@ app.post('/v1/debug/canonical', (req, res) => {
     res.status(200).json({ canonical });
   } catch (e) {
     res.status(400).json({ error: String(e.message) });
+  }
+});
+
+// GET /v1/debug/daily-limit/{buyer_address} - Ver qué está contando para el límite diario
+app.get('/v1/debug/daily-limit/:buyer_address', (req, res) => {
+  try {
+    const buyerAddress = String(req.params.buyer_address).toLowerCase();
+    const startOfDay = Math.floor(new Date().setUTCHours(0, 0, 0, 0) / 1000);
+    
+    db.all(
+      `SELECT offer_id, amount_ap_str, status, created_at, tx_hash
+       FROM vouchers
+       WHERE LOWER(buyer_address) = ?
+         AND created_at >= ?
+         AND status IN ('SUBIDO_OK','PENDING','RECEIVED')
+       ORDER BY created_at DESC`,
+      [buyerAddress, startOfDay],
+      (err, rows) => {
+        if (err) {
+          return res.status(500).json({ error: 'Error consultando DB', error_code: 'DB_ERROR' });
+        }
+        
+        const total = rows.reduce((sum, row) => sum + Number(row.amount_ap_str || 0), 0);
+        
+        res.status(200).json({
+          buyer_address: buyerAddress,
+          start_of_day: new Date(startOfDay * 1000).toISOString(),
+          total_today: total,
+          limit: OFFLINE_BUYER_DAILY_MAX_AP,
+          remaining: Math.max(0, OFFLINE_BUYER_DAILY_MAX_AP - total),
+          transactions: rows.map(r => ({
+            offer_id: r.offer_id,
+            amount_ap: r.amount_ap_str,
+            status: r.status,
+            tx_hash: r.tx_hash,
+            created_at: new Date(r.created_at * 1000).toISOString()
+          }))
+        });
+      }
+    );
+  } catch (error) {
+    res.status(500).json({ error: 'Error interno', error_code: 'INTERNAL_ERROR' });
+  }
+});
+
+// POST /v1/debug/clean-old-vouchers - Limpiar vouchers antiguos o de prueba
+app.post('/v1/debug/clean-old-vouchers', (req, res) => {
+  try {
+    const { days = 1, statuses = ['RECEIVED', 'PENDING'], dryRun = false } = req.body || {};
+    const cutoffTime = Math.floor(Date.now() / 1000) - (days * 24 * 60 * 60);
+    
+    if (dryRun) {
+      // Solo contar, no eliminar
+      const placeholders = statuses.map(() => '?').join(',');
+      db.get(
+        `SELECT COUNT(*) as count, COALESCE(SUM(CAST(amount_ap_str AS REAL)), 0) as total
+         FROM vouchers
+         WHERE created_at < ? AND status IN (${placeholders})`,
+        [cutoffTime, ...statuses],
+        (err, row) => {
+          if (err) {
+            return res.status(500).json({ error: 'Error consultando DB', error_code: 'DB_ERROR' });
+          }
+          res.status(200).json({
+            dry_run: true,
+            would_delete: row?.count || 0,
+            total_ap: row?.total || 0,
+            cutoff_date: new Date(cutoffTime * 1000).toISOString(),
+            statuses
+          });
+        }
+      );
+    } else {
+      // Eliminar realmente
+      const placeholders = statuses.map(() => '?').join(',');
+      db.run(
+        `DELETE FROM vouchers
+         WHERE created_at < ? AND status IN (${placeholders})`,
+        [cutoffTime, ...statuses],
+        function(deleteErr) {
+          if (deleteErr) {
+            return res.status(500).json({ error: 'Error eliminando vouchers', error_code: 'DB_ERROR' });
+          }
+          
+          // También limpiar outbox huérfano
+          db.run(
+            `DELETE FROM outbox WHERE offer_id NOT IN (SELECT offer_id FROM vouchers)`,
+            [],
+            () => {}
+          );
+          
+          res.status(200).json({
+            deleted: this.changes,
+            cutoff_date: new Date(cutoffTime * 1000).toISOString(),
+            statuses
+          });
+        }
+      );
+    }
+  } catch (error) {
+    res.status(500).json({ error: 'Error interno', error_code: 'INTERNAL_ERROR' });
   }
 });
 
