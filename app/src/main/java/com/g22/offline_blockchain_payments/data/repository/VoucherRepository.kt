@@ -3,8 +3,14 @@ package com.g22.offline_blockchain_payments.data.repository
 import android.content.Context
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
+import android.util.Log
 import com.g22.offline_blockchain_payments.data.api.ApiClient
+import com.g22.offline_blockchain_payments.data.api.SettleRequest
 import com.g22.offline_blockchain_payments.data.api.VoucherRequest
+import com.g22.offline_blockchain_payments.data.config.WalletConfig
+import com.g22.offline_blockchain_payments.data.crypto.EthereumSigner
+import com.g22.offline_blockchain_payments.data.crypto.PaymentBase
+import com.g22.offline_blockchain_payments.data.crypto.VoucherCanonicalizer
 import com.g22.offline_blockchain_payments.data.database.AppDatabase
 import com.g22.offline_blockchain_payments.data.database.OutboxEntity
 import com.g22.offline_blockchain_payments.data.database.VoucherEntity
@@ -163,6 +169,85 @@ class VoucherRepository(private val context: Context) {
             2 -> 5 * 60_000L // 5 minutos
             3 -> 15 * 60_000L // 15 minutos
             else -> 60 * 60_000L // 60 minutos (máximo)
+        }
+    }
+    
+    /**
+     * Método de prueba para crear y enviar un voucher con settle.
+     * Usa el mismo payload que el vector de prueba del backend.
+     * 
+     * @return true si el servidor aceptó el voucher (status 200), false en caso contrario
+     */
+    suspend fun createSettledVoucherDemo(): Boolean {
+        return try {
+            // Usar el mismo payload que el vector de prueba
+            val offerId = "550e8400-e29b-41d4-a716-446655440000"
+            val amountAp = "50"
+            val expiry = 1893456000L // Timestamp fijo para reproducibilidad
+            
+            val base = PaymentBase(
+                asset = "AP",
+                buyer_address = WalletConfig.BUYER_ADDRESS,
+                expiry = expiry,
+                offer_id = offerId,
+                seller_address = WalletConfig.SELLER_ADDRESS,
+                amount_ap = amountAp
+            )
+            
+            // Canonicalizar (debe ser idéntico al backend)
+            val canonical = VoucherCanonicalizer.canonicalizePaymentBase(base)
+            Log.d("SettleDemo", "Canonical: $canonical")
+            
+            // Firmar con ambas claves
+            val buyerSig = EthereumSigner.signMessageEip191(canonical, WalletConfig.BUYER_PRIVATE_KEY)
+            val sellerSig = EthereumSigner.signMessageEip191(canonical, WalletConfig.SELLER_PRIVATE_KEY)
+            
+            Log.d("SettleDemo", "Buyer sig: $buyerSig")
+            Log.d("SettleDemo", "Seller sig: $sellerSig")
+            
+            // Crear request
+            val request = SettleRequest(
+                offer_id = offerId,
+                amount_ap = amountAp,
+                asset = "AP",
+                expiry = expiry,
+                buyer_address = WalletConfig.BUYER_ADDRESS,
+                seller_address = WalletConfig.SELLER_ADDRESS,
+                buyer_sig = buyerSig,
+                seller_sig = sellerSig
+            )
+            
+            // Enviar al servidor
+            val response = apiService.settleVoucher(request)
+            
+            Log.d("SettleDemo", "Response code: ${response.code()}")
+            Log.d("SettleDemo", "Response body: ${response.body()}")
+            
+            when (response.code()) {
+                200 -> {
+                    val body = response.body()
+                    if (body?.status == "queued" || body?.status == "already_settled") {
+                        Log.d("SettleDemo", "✅ Voucher aceptado: ${body.status}")
+                        true
+                    } else {
+                        Log.e("SettleDemo", "❌ Status inesperado: ${body?.status}")
+                        false
+                    }
+                }
+                422 -> {
+                    Log.e("SettleDemo", "❌ Error de validación de firmas (422)")
+                    Log.e("SettleDemo", "Error: ${response.body()?.message}")
+                    false
+                }
+                else -> {
+                    Log.e("SettleDemo", "❌ Error HTTP ${response.code()}: ${response.message()}")
+                    Log.e("SettleDemo", "Error body: ${response.body()}")
+                    false
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("SettleDemo", "❌ Excepción: ${e.message}", e)
+            false
         }
     }
 }

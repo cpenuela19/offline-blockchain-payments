@@ -18,6 +18,11 @@ interface VoucherApiService {
     suspend fun getBalance(
         @Path("alias") alias: String
     ): Response<BalanceResponse>
+    
+    @POST("/v1/vouchers/settle")
+    suspend fun settleVoucher(
+        @Body request: SettleRequest
+    ): Response<SettleResponse>
 }
 
 data class BalanceResponse(

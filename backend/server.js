@@ -746,8 +746,9 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'OK', timestamp: Date.now() });
 });
 
-app.listen(PORT, () => {
-  console.log(`Servidor escuchando en puerto ${PORT}`);
+const HOST = process.env.HOST || '0.0.0.0'; // Escuchar en todas las interfaces para permitir conexiones desde la red local
+app.listen(PORT, HOST, () => {
+  console.log(`Servidor escuchando en ${HOST}:${PORT}`);
   console.log(`RPCs activos:`);
   urls.forEach((u, i) => console.log(`  [${i + 1}] ${u}`));
   console.log(`Contrato: ${CONTRACT_ADDRESS}`);

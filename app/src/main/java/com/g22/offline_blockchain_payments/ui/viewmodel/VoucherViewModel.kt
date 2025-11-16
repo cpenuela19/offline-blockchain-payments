@@ -7,11 +7,17 @@ import androidx.lifecycle.viewModelScope
 import com.g22.offline_blockchain_payments.data.repository.VoucherRepository
 import com.g22.offline_blockchain_payments.ui.data.Role
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 
 class VoucherViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = VoucherRepository(application)
     
     val allVouchers = repository.getAllVouchers()
+    
+    // Estado para el resultado del test de settle
+    private val _settleTestResult = MutableStateFlow<String?>(null)
+    val settleTestResult: StateFlow<String?> = _settleTestResult
     
     fun createVoucher(
         role: Role,
@@ -29,6 +35,26 @@ class VoucherViewModel(application: Application) : AndroidViewModel(application)
                 sellerAlias = sellerAlias
             )
         }
+    }
+    
+    /**
+     * Método de prueba para el endpoint /v1/vouchers/settle
+     * Solo para testing durante el desarrollo
+     */
+    fun testSettleVoucher() {
+        viewModelScope.launch {
+            _settleTestResult.value = "Probando..."
+            val result = repository.createSettledVoucherDemo()
+            _settleTestResult.value = if (result) {
+                "✅ Éxito: Voucher aceptado por el servidor"
+            } else {
+                "❌ Error: Revisa los logs para más detalles"
+            }
+        }
+    }
+    
+    fun clearSettleTestResult() {
+        _settleTestResult.value = null
     }
 }
 

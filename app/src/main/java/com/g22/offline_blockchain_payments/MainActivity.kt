@@ -20,7 +20,15 @@ import com.g22.offline_blockchain_payments.ui.components.DrawerMenu
 import com.g22.offline_blockchain_payments.ui.data.Role
 import com.g22.offline_blockchain_payments.ui.screens.*
 import com.g22.offline_blockchain_payments.ui.theme.OfflineblockchainpaymentsTheme
+import com.g22.offline_blockchain_payments.ui.viewmodel.VoucherViewModel
+import com.g22.offline_blockchain_payments.ui.viewmodel.VoucherViewModelFactory
 import com.g22.offline_blockchain_payments.ui.viewmodel.WalletViewModel
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -46,6 +54,14 @@ class MainActivity : ComponentActivity() {
                 val walletViewModel: WalletViewModel = viewModel()
                 val availablePoints by walletViewModel.availablePoints.collectAsState()
                 val pendingPoints by walletViewModel.pendingPoints.collectAsState()
+                
+                // ViewModel para vouchers (para el test de settle)
+                val voucherViewModel: VoucherViewModel = viewModel(
+                    factory = VoucherViewModelFactory(applicationContext as android.app.Application)
+                )
+                
+                // Snackbar para mostrar resultados del test
+                val snackbarHostState = remember { SnackbarHostState() }
                 
                 val navController = rememberNavController()
                 val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
@@ -82,12 +98,15 @@ class MainActivity : ComponentActivity() {
                             onLogoutClick = {
                                 scope.launch { drawerState.close() }
                                 // Implementar lógica de cerrar sesión
-                            }
+                            },
+                            voucherViewModel = voucherViewModel,
+                            snackbarHostState = snackbarHostState
                         )
                     },
                     scrimColor = Color.Black.copy(alpha = 0.5f)
                 ) {
-                    NavHost(navController = navController, startDestination = "initial_choice") {
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        NavHost(navController = navController, startDestination = "initial_choice") {
                         composable("initial_choice") {
                             InitialChoiceScreen(
                                 onSellClick = {
@@ -234,6 +253,13 @@ class MainActivity : ComponentActivity() {
                                 }
                             )
                         }
+                    }
+                        
+                        // Snackbar para mostrar resultados del test
+                        SnackbarHost(
+                            hostState = snackbarHostState,
+                            modifier = Modifier.align(Alignment.BottomCenter)
+                        )
                     }
                 }
             }
