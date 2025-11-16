@@ -77,43 +77,29 @@ fun DrawerMenu(
         Column {
             MenuItemRow(
                 iconRes = R.drawable.ic_send,
-                text = "Enviar",
+                text = "Dar AgroPuntos",
                 onClick = onSendClick
             )
             MenuDivider()
             
             MenuItemRow(
                 iconRes = R.drawable.ic_receive,
-                text = "Recibir",
+                text = "Recibir AgroPuntos",
                 onClick = onReceiveClick
             )
             MenuDivider()
             
             MenuItemRow(
-                iconRes = R.drawable.ic_swap,
-                text = "Intercambiar",
-                onClick = onSwapClick
-            )
-            MenuDivider()
-            
-            MenuItemRow(
                 iconRes = R.drawable.ic_history,
-                text = "Histórico de transacciones",
+                text = "Mis pagos",
                 onClick = onHistoryClick
             )
             MenuDivider()
             
             MenuItemRow(
                 iconRes = R.drawable.ic_settings,
-                text = "Ajustes",
+                text = "Configuración",
                 onClick = onSettingsClick
-            )
-            MenuDivider()
-            
-            MenuItemRow(
-                iconRes = R.drawable.ic_logout,
-                text = "Cerrar sesion",
-                onClick = onLogoutClick
             )
         }
     }

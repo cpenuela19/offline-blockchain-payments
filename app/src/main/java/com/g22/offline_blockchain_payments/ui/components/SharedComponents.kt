@@ -139,21 +139,23 @@ fun MenuItemRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
+            .heightIn(min = 64.dp)
             .clickable(onClick = onClick)
-            .padding(horizontal = 24.dp, vertical = 16.dp),
+            .padding(horizontal = 24.dp, vertical = 20.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(
             painter = painterResource(id = iconRes),
             contentDescription = text,
             tint = CyanBlue,
-            modifier = Modifier.size(28.dp)
+            modifier = Modifier.size(32.dp)
         )
         Spacer(modifier = Modifier.width(16.dp))
         Text(
             text = text,
             color = White,
-            fontSize = 26.sp,
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Medium,
             modifier = Modifier.weight(1f)
         )
         Icon(

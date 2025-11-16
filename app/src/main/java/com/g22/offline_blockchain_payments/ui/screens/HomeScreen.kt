@@ -2,12 +2,18 @@ package com.g22.offline_blockchain_payments.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -16,6 +22,7 @@ import androidx.compose.ui.unit.sp
 import com.g22.offline_blockchain_payments.R
 import com.g22.offline_blockchain_payments.ui.components.*
 import com.g22.offline_blockchain_payments.ui.theme.*
+import com.g22.offline_blockchain_payments.ui.util.NumberFormatter
 
 @Composable
 fun HomeScreen(
@@ -23,7 +30,9 @@ fun HomeScreen(
     onSendClick: () -> Unit = {},
     onReceiveClick: () -> Unit = {},
     onSwapClick: () -> Unit = {},
-    onHistoryClick: () -> Unit = {}
+    onHistoryClick: () -> Unit = {},
+    availablePoints: Long = 58200,
+    pendingPoints: Long = 20000
 ) {
     Box(
         modifier = Modifier
@@ -72,74 +81,105 @@ fun HomeScreen(
             // Dirección de wallet
             WalletAddressChip(address = "0xA80B...b6320F")
             
-            Spacer(modifier = Modifier.height(24.dp))
-            
-            // Tarjeta de Balance
-            BalanceCard(
-                title = "Balance",
-                amount = "$58,200 COP"
+            // Network status indicator
+            NetworkStatusIndicator(
+                modifier = Modifier.padding(top = 16.dp)
             )
             
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(32.dp))
             
-            // Tarjeta de Tokens disponibles
-            BalanceCard(
-                title = "Tokens disponibles",
-                amount = "58.200 TK"
-            )
-            
-            Spacer(modifier = Modifier.height(12.dp))
-            
-            // Tarjeta de Tokens por sincronizar
-            BalanceCard(
-                title = "Tokens por sincronizar",
-                amount = "20.000 TK"
-            )
-            
-            Spacer(modifier = Modifier.height(24.dp))
-            
-            // Botones de acción (primera fila - 3 botones)
-            Row(
+            // Tarjeta de AgroPuntos disponibles
+            Card(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 24.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly
+                colors = CardDefaults.cardColors(
+                    containerColor = DarkCard
+                ),
+                shape = RoundedCornerShape(16.dp)
             ) {
-                ActionButton(
-                    iconRes = R.drawable.ic_send,
-                    text = "Enviar",
-                    onClick = onSendClick,
-                    modifier = Modifier.weight(1f)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                ActionButton(
-                    iconRes = R.drawable.ic_receive,
-                    text = "Recibir",
-                    onClick = onReceiveClick,
-                    modifier = Modifier.weight(1f)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                ActionButton(
-                    iconRes = R.drawable.ic_swap,
-                    text = "Intercambiar",
-                    onClick = onSwapClick,
-                    modifier = Modifier.weight(1f)
-                )
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "AgroPuntos disponibles",
+                        color = White,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "${NumberFormatter.formatAmount(availablePoints)} AP",
+                        color = Color(0xFF4CAF50),
+                        fontSize = 56.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
             
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(16.dp))
             
-            // Botón de histórico (segunda fila, centrado)
-            Box(
+            // Tarjeta de AgroPuntos pendientes
+            Card(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 24.dp),
-                contentAlignment = Alignment.Center
+                colors = CardDefaults.cardColors(
+                    containerColor = DarkCard
+                ),
+                shape = RoundedCornerShape(16.dp)
             ) {
-                ActionButton(
-                    iconRes = R.drawable.ic_history,
-                    text = "histórico",
-                    onClick = onHistoryClick
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "AgroPuntos pendientes",
+                        color = White,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "${NumberFormatter.formatAmount(pendingPoints)} AP",
+                        color = Color(0xFFFF9800),
+                        fontSize = 56.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Se subirán cuando tengas conexión",
+                        color = LightSteelBlue,
+                        fontSize = 14.sp,
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
+            
+            Spacer(modifier = Modifier.height(32.dp))
+            
+            // Botón Ver histórico
+            Button(
+                onClick = onHistoryClick,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp)
+                    .height(72.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = CyanBlue
+                ),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Text(
+                    text = "Ver historial",
+                    fontSize = 24.sp,
+                    color = White,
+                    fontWeight = FontWeight.Bold
                 )
             }
             
@@ -147,13 +187,14 @@ fun HomeScreen(
             
             // Footer con estado offline
             Text(
-                text = "Modo: Offline disponible • Saldo local listo • Sincroniza cuando haya señal",
-                color = LightSteelBlue,
-                fontSize = 13.sp,
+                text = "Sin conexión: Los pagos se guardarán cuando tengas señal",
+                color = White,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium,
                 textAlign = TextAlign.Center,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 24.dp, vertical = 16.dp)
+                    .padding(horizontal = 24.dp, vertical = 24.dp)
             )
         }
     }
