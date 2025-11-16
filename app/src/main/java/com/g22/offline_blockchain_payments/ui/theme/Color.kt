@@ -14,3 +14,11 @@ val ProfileBlue = Color(0xFF5865F2)
 val DarkCard = Color(0xFF1E2544)
 val TextSecondary = Color(0xFF9CA3AF)
 val EmeraldGreen = Color(0xFF2ECC71)
+
+// Paleta flujo VENDER (Recibir AgroPuntos)
+val SellerPrimary = Color(0xFF4CAF50)  // Verde
+val SellerAccent = Color(0xFF69F0AE)   // Verde claro
+
+// Paleta flujo COMPRAR (Dar AgroPuntos)
+val BuyerPrimary = Color(0xFFFF9800)   // Naranja
+val BuyerAccent = Color(0xFFFFCC80)    // Naranja claro

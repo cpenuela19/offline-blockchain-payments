@@ -10,30 +10,50 @@ import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.*
 import androidx.compose.ui.graphics.Color
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.g22.offline_blockchain_payments.ble.repository.BleRepository
+import com.g22.offline_blockchain_payments.ble.viewmodel.PaymentBleViewModel
 import com.g22.offline_blockchain_payments.ui.components.DrawerMenu
 import com.g22.offline_blockchain_payments.ui.data.Role
 import com.g22.offline_blockchain_payments.ui.screens.*
 import com.g22.offline_blockchain_payments.ui.theme.OfflineblockchainpaymentsTheme
+import com.g22.offline_blockchain_payments.ui.viewmodel.WalletViewModel
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
+    private lateinit var bleRepository: BleRepository
+    private lateinit var paymentBleViewModel: PaymentBleViewModel
+    
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        
+        // Inicializar BLE Repository
+        bleRepository = BleRepository(applicationContext)
         
         // Inicializar SyncWorker
         SyncWorker.enqueue(this)
         
         setContent {
             OfflineblockchainpaymentsTheme {
+                // Crear ViewModel BLE (se mantiene durante toda la sesión)
+                paymentBleViewModel = remember { PaymentBleViewModel(bleRepository) }
+                
+                // ViewModel para el saldo de AgroPuntos
+                val walletViewModel: WalletViewModel = viewModel()
+                val availablePoints by walletViewModel.availablePoints.collectAsState()
+                val pendingPoints by walletViewModel.pendingPoints.collectAsState()
+                
                 val navController = rememberNavController()
                 val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
                 val scope = rememberCoroutineScope()
                 var currentRole by remember { mutableStateOf(Role.BUYER) }
-                var sellerAmount by remember { mutableStateOf(0L) }
+                        var buyerAmount by remember { mutableStateOf(0L) }
+                        var sellerAmount by remember { mutableStateOf(0L) }
+                        var currentTransactionId by remember { mutableStateOf("") }
                 
                 ModalNavigationDrawer(
                     drawerState = drawerState,
@@ -67,7 +87,20 @@ class MainActivity : ComponentActivity() {
                     },
                     scrimColor = Color.Black.copy(alpha = 0.5f)
                 ) {
-                    NavHost(navController = navController, startDestination = "home_minimal") {
+                    NavHost(navController = navController, startDestination = "initial_choice") {
+                        composable("initial_choice") {
+                            InitialChoiceScreen(
+                                onSellClick = {
+                                    navController.navigate("seller/charge")
+                                },
+                                onBuyClick = {
+                                    navController.navigate("buyer/start")
+                                },
+                                availablePoints = availablePoints,
+                                pendingPoints = pendingPoints
+                            )
+                        }
+                        
                         composable("home_minimal") {
                             HomeMinimal(
                                 currentRole = currentRole,
@@ -87,24 +120,29 @@ class MainActivity : ComponentActivity() {
                             )
                         }
                         
-                        // Flujo Comprador
+                        // Flujo Comprador - Ahora integrado con BLE
                         composable("buyer/start") {
-                            BuyerStartScreen(
-                                onPayClick = {
-                                    navController.navigate("buyer/confirm")
-                                },
+                            SendScreen(
+                                viewModel = paymentBleViewModel,
                                 onBack = {
                                     navController.popBackStack()
                                 },
-                                onMenuClick = {
-                                    scope.launch { drawerState.open() }
+                                onPaymentSuccess = { transactionId, amount ->
+                                    // Guardar datos reales de la transacción
+                                    currentTransactionId = paymentBleViewModel.currentTransactionId.value ?: transactionId
+                                    buyerAmount = amount
+                                    
+                                    // Descontar puntos del comprador
+                                    walletViewModel.deductPoints(amount)
+                                    
+                                    navController.navigate("buyer/receipt")
                                 }
                             )
                         }
                         
                         composable("buyer/confirm") {
                             BuyerConfirmScreen(
-                                amount = 12000L,
+                                amount = buyerAmount,
                                 destination = "Marta",
                                 onConfirm = {
                                     navController.navigate("buyer/receipt")
@@ -118,59 +156,72 @@ class MainActivity : ComponentActivity() {
                             )
                         }
                         
-                        composable("buyer/receipt") {
-                            BuyerReceiptScreen(
-                                amount = 12000L,
-                                from = "Juan P.",
-                                to = "Marta",
-                                onSave = {
-                                    // Guardar voucher (opcional - in-memory)
-                                },
-                                onClose = {
-                                    navController.navigate("home_minimal") {
-                                        popUpTo("home_minimal") { inclusive = true }
-                                    }
-                                },
-                                onMenuClick = {
-                                    scope.launch { drawerState.open() }
-                                }
-                            )
+            composable("buyer/receipt") {
+                val concept = paymentBleViewModel.paymentTransaction.value?.concept
+                BuyerReceiptScreen(
+                    amount = buyerAmount,
+                    from = "Juan P.",
+                    to = "Marta",
+                    transactionId = currentTransactionId,
+                    concept = concept,
+                    onSave = {
+                        // Guardar voucher (opcional - in-memory)
+                    },
+                    onClose = {
+                        navController.navigate("initial_choice") {
+                            popUpTo("initial_choice") { inclusive = true }
                         }
+                    },
+                    onMenuClick = {
+                        scope.launch { drawerState.open() }
+                    }
+                )
+            }
                         
-                        // Flujo Vendedor
+                        // Flujo Vendedor - Ahora integrado con BLE
                         composable("seller/charge") {
-                            SellerChargeScreen(
-                                onContinue = { amount ->
-                                    sellerAmount = amount
-                                    navController.navigate("seller/receipt")
-                                },
+                            ReceiveScreen(
+                                viewModel = paymentBleViewModel,
                                 onBack = {
                                     navController.popBackStack()
                                 },
-                                onMenuClick = {
-                                    scope.launch { drawerState.open() }
+                                onPaymentReceived = { amount, transactionId ->
+                                    android.util.Log.d("MainActivity", "🎯 onPaymentReceived called: amount=$amount, transactionId=$transactionId")
+                                    // Guardar datos reales de la transacción
+                                    currentTransactionId = paymentBleViewModel.currentTransactionId.value ?: transactionId
+                                    sellerAmount = amount
+                                    
+                                    // Agregar puntos pendientes al vendedor
+                                    walletViewModel.addPendingPoints(amount)
+                                    
+                                    android.util.Log.d("MainActivity", "📱 Navigating to seller/receipt...")
+                                    navController.navigate("seller/receipt")
+                                    android.util.Log.d("MainActivity", "✅ Navigation command sent")
                                 }
                             )
                         }
                         
-                        composable("seller/receipt") {
-                            SellerReceiptScreen(
-                                amount = sellerAmount,
-                                from = "Juan P.",
-                                to = "Marta",
-                                onSave = {
-                                    // Guardar voucher (opcional - in-memory)
-                                },
-                                onClose = {
-                                    navController.navigate("home_minimal") {
-                                        popUpTo("home_minimal") { inclusive = true }
-                                    }
-                                },
-                                onMenuClick = {
-                                    scope.launch { drawerState.open() }
-                                }
-                            )
+            composable("seller/receipt") {
+                val concept = paymentBleViewModel.paymentTransaction.value?.concept
+                SellerReceiptScreen(
+                    amount = sellerAmount,
+                    from = "Juan P.",
+                    to = "Marta",
+                    transactionId = currentTransactionId,
+                    concept = concept,
+                    onSave = {
+                        // Guardar voucher (opcional - in-memory)
+                    },
+                    onClose = {
+                        navController.navigate("initial_choice") {
+                            popUpTo("initial_choice") { inclusive = true }
                         }
+                    },
+                    onMenuClick = {
+                        scope.launch { drawerState.open() }
+                    }
+                )
+            }
                         
                         // History
                         composable("history") {
@@ -186,6 +237,15 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+        }
+    }
+    
+    override fun onDestroy() {
+        super.onDestroy()
+        // Limpiar recursos BLE
+        if (::bleRepository.isInitialized) {
+            bleRepository.stopGattServer()
+            bleRepository.disconnect()
         }
     }
 }

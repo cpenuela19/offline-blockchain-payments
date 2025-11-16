@@ -15,7 +15,7 @@ import com.google.gson.Gson
 import kotlinx.coroutines.flow.Flow
 import java.util.UUID
 
-class VoucherRepository(context: Context) {
+class VoucherRepository(private val context: Context) {
     private val database = AppDatabase.getDatabase(context)
     private val voucherDao = database.voucherDao()
     private val outboxDao = database.outboxDao()

@@ -15,6 +15,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.g22.offline_blockchain_payments.R
 import com.g22.offline_blockchain_payments.ui.theme.*
+import com.g22.offline_blockchain_payments.ui.util.NumberFormatter
 
 @Composable
 fun BuyerConfirmScreen(
@@ -59,10 +60,10 @@ fun BuyerConfirmScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Pagar",
-                    color = White,
-                    fontSize = 22.sp,
-                    fontWeight = FontWeight.Medium,
+                    text = "Confirmar entrega",
+                    color = BuyerPrimary,
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Center
                 )
             }
@@ -109,15 +110,16 @@ fun BuyerConfirmScreen(
                         modifier = Modifier.weight(1f)
                     ) {
                         Text(
-                            text = "Vas a pagar",
-                            color = LightSteelBlue,
-                            fontSize = 14.sp
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = "${String.format("%,d", amount)} AP",
+                            text = "Vas a dar",
                             color = White,
-                            fontSize = 24.sp,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "${NumberFormatter.formatAmount(amount)} AP",
+                            color = BuyerPrimary,
+                            fontSize = 28.sp,
                             fontWeight = FontWeight.Bold
                         )
                     }
@@ -129,15 +131,16 @@ fun BuyerConfirmScreen(
                         horizontalAlignment = Alignment.End
                     ) {
                         Text(
-                            text = "Destino",
-                            color = LightSteelBlue,
-                            fontSize = 14.sp
+                            text = "Quien recibe",
+                            color = White,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Medium
                         )
-                        Spacer(modifier = Modifier.height(6.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
                         Text(
                             text = destination,
                             color = White,
-                            fontSize = 24.sp,
+                            fontSize = 20.sp,
                             fontWeight = FontWeight.Bold,
                             textAlign = TextAlign.End
                         )
@@ -153,17 +156,18 @@ fun BuyerConfirmScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 24.dp)
-                    .height(56.dp),
+                    .height(72.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = CyanBlue
+                    containerColor = BuyerPrimary
                 ),
-                shape = RoundedCornerShape(12.dp)
+                shape = RoundedCornerShape(16.dp)
             ) {
                 Text(
-                    text = "Confirmar",
-                    fontSize = 16.sp,
+                    text = "Confirmar y dar AgroPuntos",
+                    fontSize = 22.sp,
                     color = White,
-                    fontWeight = FontWeight.Medium
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center
                 )
             }
             
@@ -175,15 +179,15 @@ fun BuyerConfirmScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 24.dp)
-                    .height(56.dp),
+                    .height(64.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = DarkCard
                 ),
-                shape = RoundedCornerShape(12.dp)
+                shape = RoundedCornerShape(16.dp)
             ) {
                 Text(
-                    text = "Atrás",
-                    fontSize = 16.sp,
+                    text = "Cancelar",
+                    fontSize = 20.sp,
                     color = White,
                     fontWeight = FontWeight.Medium
                 )
