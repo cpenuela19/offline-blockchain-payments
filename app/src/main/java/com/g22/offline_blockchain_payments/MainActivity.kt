@@ -151,6 +151,15 @@ class MainActivity : ComponentActivity() {
                                     currentTransactionId = paymentBleViewModel.currentTransactionId.value ?: transactionId
                                     buyerAmount = amount
                                     
+                                    // Crear voucher con settle (offline con firmas)
+                                    val paymentTx = paymentBleViewModel.paymentTransaction.value
+                                    voucherViewModel.createSettledVoucher(
+                                        role = com.g22.offline_blockchain_payments.ui.data.Role.BUYER,
+                                        amountAp = amount,
+                                        counterparty = paymentTx?.receiverName ?: "Vendedor",
+                                        offerId = transactionId
+                                    )
+                                    
                                     // Descontar puntos del comprador
                                     walletViewModel.deductPoints(amount)
                                     
@@ -209,6 +218,15 @@ class MainActivity : ComponentActivity() {
                                     // Guardar datos reales de la transacción
                                     currentTransactionId = paymentBleViewModel.currentTransactionId.value ?: transactionId
                                     sellerAmount = amount
+                                    
+                                    // Crear voucher con settle (offline con firmas)
+                                    val paymentTx = paymentBleViewModel.paymentTransaction.value
+                                    voucherViewModel.createSettledVoucher(
+                                        role = com.g22.offline_blockchain_payments.ui.data.Role.SELLER,
+                                        amountAp = amount,
+                                        counterparty = paymentTx?.senderName ?: "Comprador",
+                                        offerId = transactionId
+                                    )
                                     
                                     // Agregar puntos pendientes al vendedor
                                     walletViewModel.addPendingPoints(amount)

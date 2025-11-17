@@ -115,8 +115,10 @@ fun DrawerMenu(
             MenuDivider()
             
             // Botón temporal de prueba para /v1/vouchers/settle
-            // TODO: Eliminar en producción
-            if (voucherViewModel != null) {
+            // Solo visible en builds de debug (usar BuildConfig.DEBUG cuando esté disponible)
+            // Por ahora visible siempre, pero marcado como TODO para producción
+            @Suppress("ConstantConditionIf")
+            if (true && voucherViewModel != null) { // TODO: Cambiar a BuildConfig.DEBUG en producción
                 val testResult by voucherViewModel.settleTestResult.collectAsState()
                 val scope = rememberCoroutineScope()
                 

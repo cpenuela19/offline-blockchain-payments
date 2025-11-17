@@ -3,6 +3,7 @@ package com.g22.offline_blockchain_payments.ui.data
 enum class VoucherStatus {
     GUARDADO_SIN_SENAL,
     ENVIANDO,
+    RECEIVED,      // Voucher recibido/queued en servidor, esperando tx_hash
     SUBIDO_OK,
     ERROR
 }

@@ -282,6 +282,7 @@ fun VoucherItem(voucher: VoucherEntity, context: Context) {
     val statusText = when (voucher.status) {
         VoucherStatus.GUARDADO_SIN_SENAL -> "Guardado sin señal"
         VoucherStatus.ENVIANDO -> "Guardando…"
+        VoucherStatus.RECEIVED -> "Recibido, esperando confirmación"
         VoucherStatus.SUBIDO_OK -> "Guardado correctamente"
         VoucherStatus.ERROR -> voucher.lastError ?: "Error"
     }
@@ -289,6 +290,7 @@ fun VoucherItem(voucher: VoucherEntity, context: Context) {
     val statusColor = when (voucher.status) {
         VoucherStatus.SUBIDO_OK -> Color(0xFF00FFB3)
         VoucherStatus.ENVIANDO -> CyanBlue
+        VoucherStatus.RECEIVED -> CyanBlue
         else -> Color.Transparent
     }
     

@@ -1,6 +1,7 @@
 package com.g22.offline_blockchain_payments.data.config
 
 import org.web3j.crypto.Credentials
+import org.web3j.crypto.Keys
 
 /**
  * Configuración de wallets para la demo.
@@ -25,6 +26,12 @@ object WalletConfig {
     const val SELLER_PRIVATE_KEY: String =
         "0x62f00f0389ee43016a60a5783cf05017e3c58e2959dd466471cf0287fc7088b6"
 
+    // === Direcciones esperadas (del backend .env) ===
+    // Estas son las direcciones que el backend espera para A_ADDRESS y B_ADDRESS
+    // Se usan para validar que las claves privadas son correctas
+    private const val EXPECTED_BUYER_ADDRESS = "0xef2a6965823679785813acc2bb8bec7872b660a0"
+    private const val EXPECTED_SELLER_ADDRESS = "0x8846f77a51371269a9e84310cc978154adbf7cf8"
+
     // === Direcciones derivadas de las claves privadas ===
     // Si todo está bien, estas deberían coincidir con las direcciones que usa el backend.
     // Solo se usan los fallback si ocurre algún error al derivar.
@@ -32,20 +39,42 @@ object WalletConfig {
     val BUYER_ADDRESS: String by lazy {
         try {
             val credentials = Credentials.create(BUYER_PRIVATE_KEY)
-            credentials.address.lowercase()
+            val derivedAddress = credentials.address.lowercase()
+            
+            // Validar que la dirección derivada coincida con la esperada
+            if (derivedAddress != EXPECTED_BUYER_ADDRESS.lowercase()) {
+                android.util.Log.w(
+                    "WalletConfig",
+                    "⚠️ ADVERTENCIA: BUYER_ADDRESS derivada ($derivedAddress) no coincide con la esperada ($EXPECTED_BUYER_ADDRESS)"
+                )
+            }
+            
+            derivedAddress
         } catch (e: Exception) {
+            android.util.Log.e("WalletConfig", "❌ Error derivando BUYER_ADDRESS: ${e.message}")
             // Fallback histórico (no debería usarse si la clave es válida)
-            "0xef2a6965823679785813acc2bb8bec7872b660a0"
+            EXPECTED_BUYER_ADDRESS
         }
     }
 
     val SELLER_ADDRESS: String by lazy {
         try {
             val credentials = Credentials.create(SELLER_PRIVATE_KEY)
-            credentials.address.lowercase()
+            val derivedAddress = credentials.address.lowercase()
+            
+            // Validar que la dirección derivada coincida con la esperada
+            if (derivedAddress != EXPECTED_SELLER_ADDRESS.lowercase()) {
+                android.util.Log.w(
+                    "WalletConfig",
+                    "⚠️ ADVERTENCIA: SELLER_ADDRESS derivada ($derivedAddress) no coincide con la esperada ($EXPECTED_SELLER_ADDRESS)"
+                )
+            }
+            
+            derivedAddress
         } catch (e: Exception) {
+            android.util.Log.e("WalletConfig", "❌ Error derivando SELLER_ADDRESS: ${e.message}")
             // Fallback histórico (no debería usarse si la clave es válida)
-            "0x8846f77a51371269a9e84310cc978154adbf7cf8"
+            EXPECTED_SELLER_ADDRESS
         }
     }
 

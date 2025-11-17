@@ -38,8 +38,30 @@ class VoucherViewModel(application: Application) : AndroidViewModel(application)
     }
     
     /**
+     * Crea un voucher con settle (offline con firmas criptográficas).
+     * El voucher se guarda localmente y se sincroniza cuando hay conexión.
+     */
+    fun createSettledVoucher(
+        role: Role,
+        amountAp: Long,
+        counterparty: String,
+        expiry: Long? = null,
+        offerId: String? = null
+    ) {
+        viewModelScope.launch {
+            repository.createSettledVoucher(
+                role = role,
+                amountAp = amountAp,
+                counterparty = counterparty,
+                expiry = expiry ?: (System.currentTimeMillis() / 1000 + (7 * 24 * 60 * 60)),
+                offerId = offerId
+            )
+        }
+    }
+    
+    /**
      * Método de prueba para el endpoint /v1/vouchers/settle
-     * Solo para testing durante el desarrollo
+     * Solo para testing durante el desarrollo (debug builds)
      */
     fun testSettleVoucher() {
         viewModelScope.launch {

@@ -20,7 +20,14 @@ data class VoucherEntity(
     val createdAt: Long,
     val status: VoucherStatus,   // GUARDADO_SIN_SENAL | ENVIANDO | SUBIDO_OK | ERROR
     val txHash: String? = null,
-    val lastError: String? = null
+    val lastError: String? = null,
+    // Campos para settle (offline con firmas)
+    val asset: String? = null,           // "AP"
+    val expiry: Long? = null,           // Timestamp de expiración
+    val buyerAddress: String? = null,    // Dirección del comprador
+    val sellerAddress: String? = null,   // Dirección del vendedor
+    val buyerSig: String? = null,        // Firma del comprador
+    val sellerSig: String? = null         // Firma del vendedor
 )
 
 class VoucherTypeConverters {
