@@ -81,6 +81,9 @@ dependencies {
     // Corrutinas
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     
+    // Ethereum crypto (para firmas ECDSA)
+    implementation("org.web3j:crypto:4.9.8")
+    
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

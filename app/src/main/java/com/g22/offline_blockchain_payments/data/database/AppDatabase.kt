@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 
 @Database(
     entities = [VoucherEntity::class, OutboxEntity::class],
-    version = 1,
+    version = 2, // Incrementado por nuevos campos en VoucherEntity (settle)
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -24,7 +24,11 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "payments_database"
-                ).build()
+                )
+                .fallbackToDestructiveMigration() // Para desarrollo: recrea la DB si hay cambios
+                // TODO: Implementar migración real para producción (Migration de versión 1 a 2)
+                // En producción, crear una Migration que preserve los datos existentes
+                .build()
                 INSTANCE = instance
                 instance
             }
