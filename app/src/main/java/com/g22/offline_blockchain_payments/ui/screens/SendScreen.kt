@@ -41,6 +41,7 @@ fun SendScreen(
 ) {
     val context = LocalContext.current
     var currentStep by remember { mutableStateOf(SendStep.SCANNING) }
+    var paymentConfirmed by remember { mutableStateOf(false) }
     
     val scannedPayload by viewModel.scannedPayload.collectAsState()
     val paymentTransaction by viewModel.paymentTransaction.collectAsState()
@@ -78,11 +79,23 @@ fun SendScreen(
         }
     }
     
-    // Observar estado de conexión exitosa
-    LaunchedEffect(connectionState) {
-        if (connectionState is ConnectionState.Success && isConnected) {
+    // Navegar al recibo cuando el pago se confirma (independientemente de BLE)
+    // BLE es opcional, solo para notificar al vendedor
+    var hasNavigated by remember { mutableStateOf(false) }
+    
+    LaunchedEffect(paymentConfirmed, paymentTransaction, connectionState, isConnected) {
+        if (paymentConfirmed && paymentTransaction != null && !hasNavigated) {
+            // Esperar un poco para intentar conectar vía BLE (opcional)
+            kotlinx.coroutines.delay(2000)
+            
+            // Si BLE se conectó exitosamente, esperar a que se envíe el mensaje
+            if (connectionState is ConnectionState.Success && isConnected) {
+                kotlinx.coroutines.delay(1000) // Dar tiempo para enviar por BLE
+            }
+            
+            // Navegar al recibo (el voucher ya se creó cuando se confirmó)
             paymentTransaction?.let { tx ->
-                // Pago enviado exitosamente
+                hasNavigated = true
                 onPaymentSuccess(tx.transactionId, tx.amount)
             }
         }
@@ -125,8 +138,29 @@ fun SendScreen(
             pendingReceiverName = pendingReceiverName,
             pendingConcept = pendingConcept,
             onConfirm = {
-                viewModel.connectToHost("Juan P.") // TODO: Obtener de perfil
-                currentStep = SendStep.CONNECTING
+                // Generar transactionId y crear PaymentTransaction inmediatamente
+                val transactionId = java.util.UUID.randomUUID().toString()
+                val payload = scannedPayload
+                if (payload != null) {
+                    val tx = com.g22.offline_blockchain_payments.ble.model.PaymentTransaction(
+                        transactionId = transactionId,
+                        amount = pendingAmount,
+                        senderName = "Juan P.", // TODO: Obtener de perfil
+                        receiverName = pendingReceiverName,
+                        concept = pendingConcept ?: "Pago offline",
+                        sessionId = payload.sessionId
+                    )
+                    // Guardar en el ViewModel
+                    viewModel.setPaymentTransaction(tx)
+                    paymentConfirmed = true
+                    
+                    // Crear voucher inmediatamente (offline) - esto se hace en MainActivity.onPaymentSuccess
+                    // No llamar onPaymentSuccess aquí, se llamará desde LaunchedEffect
+                    
+                    // Intentar conectar vía BLE (opcional, para notificar al vendedor)
+                    viewModel.connectToHost("Juan P.")
+                    currentStep = SendStep.CONNECTING
+                }
             },
             onCancel = {
                 viewModel.disconnect()

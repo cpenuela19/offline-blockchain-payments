@@ -254,6 +254,15 @@ class PaymentBleViewModel(private val bleRepository: BleRepository) : ViewModel(
     }
     
     /**
+     * Establece una PaymentTransaction ya creada (usado cuando se confirma el pago antes de BLE)
+     */
+    fun setPaymentTransaction(transaction: PaymentTransaction) {
+        _paymentTransaction.value = transaction
+        _currentTransactionId.value = transaction.transactionId
+        Log.d(TAG, "💎 PaymentTransaction establecida: ${transaction.transactionId}")
+    }
+    
+    /**
      * Envía la confirmación de pago al vendedor
      * 
      * ESTE ES EL MOMENTO donde se genera el transactionId único.

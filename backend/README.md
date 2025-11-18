@@ -28,7 +28,9 @@ cp .env.example .env
    - `PRIVATE_KEY_CUENTA_MADRE`: Clave privada de la cuenta que tiene los tokens
    - `CONTRACT_ADDRESS_AP`: Dirección del contrato ERC-20 AgroPuntos
    - `CHAIN_ID`: 11155111 para Sepolia
-   - `OFFLINE_VOUCHER_MAX_AP` y `OFFLINE_BUYER_DAILY_MAX_AP` (opcional, límites de riesgo)
+   - `PRIV_KEY_A`: Clave privada del buyer (Juan) - **Requerido para approve automático**
+   - `PRIV_KEY_B`: Clave privada del seller (María) - Opcional
+   - `MOTHER_ADDRESS`: Dirección de la cuenta madre (opcional, se usa la derivada de PRIVATE_KEY_CUENTA_MADRE por defecto)
 
 ## Ejecutar
 
@@ -161,9 +163,26 @@ Actualmente el mapeo está hardcodeado en `server.js`. En producción, deberías
 
 ## Límites y reintentos
 
-- Máximo por voucher offline: 200 AP (configurable vía `OFFLINE_VOUCHER_MAX_AP`).
-- Máximo diario acumulado por `buyer_address`: 1000 AP (configurable vía `OFFLINE_BUYER_DAILY_MAX_AP`).
+- Sin límites de monto por voucher o diarios (límites eliminados).
 - El worker vuelve a intentar vouchers con estado `FAILED` automáticamente 60 segundos después.
+
+## Approve Automático
+
+El sistema ahora maneja el `approve` automáticamente cuando es necesario:
+
+- **No necesitas ejecutar `setTransaction.js` manualmente** - Todo se maneja internamente en `server.js`
+- Cuando un voucher requiere transferencia y el buyer no tiene suficiente `allowance`, el sistema:
+  1. Detecta automáticamente la falta de allowance
+  2. Busca la clave privada del buyer en el `.env` (PRIV_KEY_A o PRIV_KEY_B)
+  3. Ejecuta el `approve` automáticamente
+  4. Continúa con la transacción
+
+**Requisitos para approve automático:**
+- `PRIV_KEY_A` debe estar en el `.env` (clave privada del buyer)
+- El buyer debe tener suficiente balance de ETH para pagar el gas del approve
+- El contrato debe estar correctamente configurado
+
+**Nota de seguridad:** En producción, las claves privadas NO deben estar en el `.env`. Deben manejarse mediante un sistema de wallet management seguro o firmas off-chain.
 
 ## Base de Datos
 
@@ -178,6 +197,8 @@ SQLite se crea automáticamente (`vouchers.db`). La tabla `vouchers` almacena:
 La tabla `outbox` (creada automáticamente) mantiene los vouchers pendientes de liquidar (`state`: PENDING | SENT | FAILED).
 
 El worker (`setInterval(processOutboxOnce, 10000)`) procesa hasta 10 vouchers pendientes cada 10s:
-- Convierte `amount_ap_str` → `parseUnits`, ejecuta `transfer()` y espera `CONFIRMATIONS`.
-- Actualiza estados en `vouchers` y marca el registro en `outbox`.
+- Verifica balance y allowance del buyer
+- Si falta allowance, ejecuta `approve` automáticamente (si PRIV_KEY_A está configurado)
+- Convierte `amount_ap_str` → `parseUnits`, ejecuta `transferFrom()` y espera `CONFIRMATIONS`
+- Actualiza estados en `vouchers` y marca el registro en `outbox`
 
