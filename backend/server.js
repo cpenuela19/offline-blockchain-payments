@@ -12,8 +12,8 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ───────────────────────────── Middleware ─────────────────────────────
-app.use(cors());
 app.use(express.json());
+app.use(cors());
 
 // Rate limiting
 const limiter = rateLimit({
@@ -31,8 +31,10 @@ const CONFIRMATIONS = parseInt(process.env.CONFIRMATIONS || '1');
 
 // Soporte para múltiples RPCs (Infura/Alchemy + fallback público)
 const urls = [
-  process.env.RPC_URL_PRIMARY || process.env.RPC_URL, // principal (Infura/Alchemy)
-  process.env.RPC_URL_SECONDARY                      // secundario (fallback)
+  process.env.RPC_URL_PRIMARY || process.env.RPC_URL, // principal (Infura)
+  process.env.RPC_URL_SECONDARY,  // secundario (Infura)
+  process.env.RPC_URL_TERTIARY,  // terciario (Infuria)
+  process.env.RPC_URL_QUATERNARY  // Fallback publico
 ].filter(Boolean);
 
 if (!PRIVATE_KEY || !CONTRACT_ADDRESS || urls.length === 0) {
