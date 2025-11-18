@@ -84,7 +84,12 @@ class SyncWorker(
                 )
                 .build()
             
-            WorkManager.getInstance(context).enqueue(workRequest)
+            // Usar enqueueUniqueWork para evitar múltiples workers simultáneos
+            WorkManager.getInstance(context).enqueueUniqueWork(
+                "sync_vouchers_onetime",
+                ExistingWorkPolicy.KEEP, // Si ya hay uno en cola, mantener el existente
+                workRequest
+            )
         }
     }
 }

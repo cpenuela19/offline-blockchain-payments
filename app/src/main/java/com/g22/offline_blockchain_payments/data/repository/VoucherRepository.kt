@@ -153,16 +153,23 @@ class VoucherRepository(private val context: Context) {
             seller_sig = sellerSig
         )
         
-        val outboxItem = OutboxEntity(
-            id = finalOfferId,
-            payload = gson.toJson(settleRequest),
-            attempts = 0,
-            nextAttemptAt = System.currentTimeMillis()
-        )
+        // Verificar si ya existe un outbox item con este ID (evitar duplicados)
+        val existingOutbox = outboxDao.getOutboxItemById(finalOfferId)
+        if (existingOutbox == null) {
+            val outboxItem = OutboxEntity(
+                id = finalOfferId,
+                payload = gson.toJson(settleRequest),
+                attempts = 0,
+                nextAttemptAt = System.currentTimeMillis()
+            )
+            
+            outboxDao.insertOutboxItem(outboxItem)
+            Log.d("SettleVoucher", "📦 Outbox item creado: $finalOfferId")
+        } else {
+            Log.d("SettleVoucher", "⚠️ Outbox item ya existe, omitiendo: $finalOfferId")
+        }
         
-        outboxDao.insertOutboxItem(outboxItem)
-        
-        // Disparar sync inmediato si hay red
+        // Disparar sync inmediato si hay red (usar unique work para evitar duplicados)
         SyncWorker.enqueueOneTime(context)
         
         Log.d("SettleVoucher", "✅ Voucher con settle creado: $finalOfferId")
@@ -257,7 +264,26 @@ class VoucherRepository(private val context: Context) {
                     }
                     429 -> {
                         // Rate limit o límite de riesgo excedido
-                        val errorMsg = response.body()?.message ?: "Límite de riesgo excedido o rate limit"
+                        val errorMsg = try {
+                            // Intentar parsear el body como SettleResponse
+                            response.body()?.message
+                                ?: run {
+                                    // Si no hay body, intentar parsear errorBody
+                                    val errorBodyStr = response.errorBody()?.string()
+                                    if (errorBodyStr != null) {
+                                        try {
+                                            val errorJson = gson.fromJson(errorBodyStr, Map::class.java)
+                                            (errorJson["message"] as? String) ?: "Límite de riesgo excedido o rate limit"
+                                        } catch (e: Exception) {
+                                            errorBodyStr
+                                        }
+                                    } else {
+                                        "Límite de riesgo excedido o rate limit"
+                                    }
+                                }
+                        } catch (e: Exception) {
+                            "Límite de riesgo excedido o rate limit"
+                        }
                         Log.w("SyncVoucher", "⚠️ 429 Rate Limit: $errorMsg para voucher ${voucher.id}")
                         
                         // Guardar error pero permitir reintento con backoff
@@ -343,7 +369,22 @@ class VoucherRepository(private val context: Context) {
                     }
                     429 -> {
                         // Rate limit o límite de riesgo excedido
-                        val errorMsg = "Límite de riesgo excedido o rate limit"
+                        val errorMsg = try {
+                            // Intentar parsear el body o errorBody
+                            val errorBodyStr = response.errorBody()?.string()
+                            if (errorBodyStr != null) {
+                                try {
+                                    val errorJson = gson.fromJson(errorBodyStr, Map::class.java)
+                                    (errorJson["message"] as? String) ?: "Límite de riesgo excedido o rate limit"
+                                } catch (e: Exception) {
+                                    errorBodyStr
+                                }
+                            } else {
+                                "Límite de riesgo excedido o rate limit"
+                            }
+                        } catch (e: Exception) {
+                            "Límite de riesgo excedido o rate limit"
+                        }
                         Log.w("SyncVoucher", "⚠️ 429 Rate Limit: $errorMsg para voucher ${voucher.id}")
                         
                         // Guardar error pero permitir reintento con backoff

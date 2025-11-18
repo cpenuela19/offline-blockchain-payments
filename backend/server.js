@@ -12,8 +12,8 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ───────────────────────────── Middleware ─────────────────────────────
-app.use(cors());
 app.use(express.json());
+app.use(cors());
 
 // Rate limiting
 const limiter = rateLimit({
@@ -31,8 +31,10 @@ const CONFIRMATIONS = parseInt(process.env.CONFIRMATIONS || '1');
 
 // Soporte para múltiples RPCs (Infura/Alchemy + fallback público)
 const urls = [
-  process.env.RPC_URL_PRIMARY || process.env.RPC_URL, // principal (Infura/Alchemy)
-  process.env.RPC_URL_SECONDARY                      // secundario (fallback)
+  process.env.RPC_URL_PRIMARY || process.env.RPC_URL, // principal (Infura)
+  process.env.RPC_URL_SECONDARY,  // secundario (Infura)
+  process.env.RPC_URL_TERTIARY,  // terciario (Infuria)
+  process.env.RPC_URL_QUATERNARY  // Fallback publico
 ].filter(Boolean);
 
 if (!PRIVATE_KEY || !CONTRACT_ADDRESS || urls.length === 0) {
@@ -77,9 +79,87 @@ const ERC20_ABI = [
 const tokenContract = new ethers.Contract(CONTRACT_ADDRESS, ERC20_ABI, wallet);
 console.log(`🔗 Contrato conectado: ${CONTRACT_ADDRESS}`);
 
-// Límites offline (pueden ajustarse por env)
-const OFFLINE_VOUCHER_MAX_AP = Number(process.env.OFFLINE_VOUCHER_MAX_AP || 200);
-const OFFLINE_BUYER_DAILY_MAX_AP = Number(process.env.OFFLINE_BUYER_DAILY_MAX_AP || 1000);
+// Límites offline eliminados - sin restricciones de monto
+
+// Claves privadas de usuarios de prueba (para approve automático)
+// En producción, esto debería venir de una base de datos segura o wallet management
+const PRIV_KEY_A = process.env.PRIV_KEY_A; // Buyer (Juan)
+const PRIV_KEY_B = process.env.PRIV_KEY_B; // Seller (María)
+const MOTHER_ADDRESS = process.env.MOTHER_ADDRESS || wallet.address;
+
+// Mapa de direcciones a claves privadas para approve automático
+const addressToPrivateKey = new Map();
+if (PRIV_KEY_A) {
+  try {
+    const walletA = new ethers.Wallet(PRIV_KEY_A);
+    addressToPrivateKey.set(walletA.address.toLowerCase(), PRIV_KEY_A);
+    console.log(`✅ Clave privada A configurada para: ${walletA.address}`);
+  } catch (e) {
+    console.warn(`⚠️  Error configurando PRIV_KEY_A: ${e.message}`);
+  }
+}
+if (PRIV_KEY_B) {
+  try {
+    const walletB = new ethers.Wallet(PRIV_KEY_B);
+    addressToPrivateKey.set(walletB.address.toLowerCase(), PRIV_KEY_B);
+    console.log(`✅ Clave privada B configurada para: ${walletB.address}`);
+  } catch (e) {
+    console.warn(`⚠️  Error configurando PRIV_KEY_B: ${e.message}`);
+  }
+}
+
+/**
+ * Asegura que una dirección tenga suficiente allowance hacia la cuenta madre.
+ * Si no tiene suficiente, intenta hacer approve automáticamente.
+ * @param {string} buyerAddress - Dirección del buyer
+ * @param {bigint} requiredAmount - Cantidad requerida en wei
+ * @returns {Promise<boolean>} - true si tiene suficiente allowance (o se aprobó), false si falló
+ */
+async function ensureAllowance(buyerAddress, requiredAmount) {
+  const buyerLower = buyerAddress.toLowerCase();
+  
+  // Verificar allowance actual
+  const currentAllowance = await tokenContract.allowance(buyerAddress, MOTHER_ADDRESS);
+  
+  if (currentAllowance >= requiredAmount) {
+    console.log(`[APPROVE] ${buyerAddress} ya tiene suficiente allowance: ${currentAllowance.toString()}`);
+    return true;
+  }
+  
+  console.log(`[APPROVE] ${buyerAddress} necesita approve. Allowance actual: ${currentAllowance.toString()}, requerido: ${requiredAmount.toString()}`);
+  
+  // Buscar clave privada del buyer
+  const buyerPrivateKey = addressToPrivateKey.get(buyerLower);
+  if (!buyerPrivateKey) {
+    console.error(`[APPROVE] ❌ No se encontró clave privada para ${buyerAddress}. No se puede hacer approve automático.`);
+    console.error(`[APPROVE] 💡 Agrega PRIV_KEY_A o PRIV_KEY_B en .env para habilitar approve automático.`);
+    return false;
+  }
+  
+  try {
+    // Crear wallet del buyer
+    const buyerWallet = new ethers.Wallet(buyerPrivateKey, provider);
+    const buyerTokenContract = new ethers.Contract(CONTRACT_ADDRESS, ERC20_ABI, buyerWallet);
+    
+    console.log(`[APPROVE] 🔐 Haciendo approve automático desde ${buyerAddress} hacia ${MOTHER_ADDRESS}...`);
+    
+    // Hacer approve de MaxUint256 para evitar tener que hacerlo múltiples veces
+    const approveTx = await buyerTokenContract.approve(MOTHER_ADDRESS, ethers.MaxUint256);
+    console.log(`[APPROVE] 📝 Transacción approve enviada: ${approveTx.hash}`);
+    
+    // Esperar confirmación
+    await approveTx.wait(1);
+    
+    // Verificar nuevo allowance
+    const newAllowance = await tokenContract.allowance(buyerAddress, MOTHER_ADDRESS);
+    console.log(`[APPROVE] ✅ Approve confirmado. Nuevo allowance: ${newAllowance.toString()}`);
+    
+    return newAllowance >= requiredAmount;
+  } catch (e) {
+    console.error(`[APPROVE] ❌ Error haciendo approve automático: ${e.message}`);
+    return false;
+  }
+}
 
 let DECIMALS_CACHE = null;
 async function getDecimals() {
@@ -381,9 +461,6 @@ app.post('/v1/vouchers/settle', async (req, res) => {
     if (!Number.isFinite(amountNumeric) || amountNumeric <= 0) {
       return res.status(400).json({ error_code: 'BAD_AMOUNT', message: 'amount_ap inválido' });
     }
-    if (amountNumeric > OFFLINE_VOUCHER_MAX_AP) {
-      return res.status(429).json({ error_code: 'RISK_LIMITS', message: `amount_ap excede el máximo por voucher (${OFFLINE_VOUCHER_MAX_AP} AP)` });
-    }
 
     const sellerLower = seller_address.toLowerCase();
     const buyerLower = buyer_address.toLowerCase();
@@ -409,30 +486,8 @@ app.post('/v1/vouchers/settle', async (req, res) => {
       return res.status(422).json({ error_code: 'INVALID_SIGNATURE', message: 'seller_sig or buyer_sig invalid' });
     }
 
-    const startOfDay = Math.floor(new Date().setUTCHours(0, 0, 0, 0) / 1000);
-
-    db.get(
-      `SELECT COALESCE(SUM(CAST(amount_ap_str AS REAL)), 0) AS total
-       FROM vouchers
-       WHERE LOWER(buyer_address) = ?
-         AND created_at >= ?
-         AND status IN ('SUBIDO_OK','PENDING','RECEIVED')
-         AND offer_id <> ?`,
-      [buyerLower, startOfDay, offer_id],
-      (sumErr, aggregate) => {
-        if (sumErr) {
-          console.error('Error evaluando límites de riesgo:', sumErr);
-          return res.status(500).json({ error_code: 'DB_ERROR', message: 'Risk limits check failed' });
-        }
-        const totalToday = Number(aggregate?.total || 0);
-        if (totalToday + amountNumeric > OFFLINE_BUYER_DAILY_MAX_AP) {
-          return res.status(429).json({
-            error_code: 'RISK_LIMITS',
-            message: `buyer_address excede el límite diario (${OFFLINE_BUYER_DAILY_MAX_AP} AP)`
-          });
-        }
-
-        db.get('SELECT offer_id, tx_hash, status FROM vouchers WHERE offer_id=?', [offer_id], (err, row) => {
+    // Verificar si el voucher ya existe
+    db.get('SELECT offer_id, tx_hash, status FROM vouchers WHERE offer_id=?', [offer_id], (err, row) => {
           if (err) return res.status(500).json({ error_code: 'DB_ERROR', message: 'DB read error' });
 
           if (row && row.tx_hash && row.status === 'SUBIDO_OK') {
@@ -477,8 +532,6 @@ app.post('/v1/vouchers/settle', async (req, res) => {
           if (!row) return upsert();
           upsert();
         });
-      }
-    );
   } catch (e) {
     console.error('Error in /v1/vouchers/settle:', e);
     return res.status(500).json({ error_code: 'INTERNAL_ERROR', message: 'Unexpected server error' });
@@ -626,10 +679,12 @@ async function processOutboxOnce() {
 
             try {
               // --- dentro de processOutboxOnce(), justo antes de firmar la tx ---
+              console.log(`[OUTBOX] Procesando voucher: ${offer_id}`);
               const decimals = await getDecimals();
 
               const amountStr = v.amount_ap_str;               // viene de /settle
               if (!amountStr) {
+                console.error(`[OUTBOX] ❌ ${offer_id}: MISSING_amount_ap_str`);
                 markOutbox(offer_id, 'FAILED', 'MISSING_amount_ap_str', () => {});
                 return;
               }
@@ -639,13 +694,22 @@ async function processOutboxOnce() {
               const to   = v.seller_address;                   // B
 
               if (!/^0x[a-fA-F0-9]{40}$/.test(from)) {
+                console.error(`[OUTBOX] ❌ ${offer_id}: BAD_BUYER_ADDRESS: ${from}`);
                 markOutbox(offer_id, 'FAILED', 'BAD_BUYER_ADDRESS', () => {});
                 return;
               }
               if (!/^0x[a-fA-F0-9]{40}$/.test(to)) {
+                console.error(`[OUTBOX] ❌ ${offer_id}: BAD_SELLER_ADDRESS: ${to}`);
                 markOutbox(offer_id, 'FAILED', 'BAD_SELLER_ADDRESS', () => {});
                 return;
               }
+
+              console.log(`[OUTBOX] Verificando balance y allowance para ${offer_id}`);
+              console.log(`  Contrato: ${CONTRACT_ADDRESS}`);
+              console.log(`  Buyer (from): ${from}`);
+              console.log(`  Seller (to): ${to}`);
+              console.log(`  Cuenta madre (spender): ${wallet.address}`);
+              console.log(`  Monto solicitado: ${amountStr} AP (${requested.toString()} wei)`);
 
               // Chequear balance y allowance de A
               const [balanceA, allowanceAB] = await Promise.all([
@@ -653,14 +717,39 @@ async function processOutboxOnce() {
                 tokenContract.allowance(from, wallet.address)   // madre como spender
               ]);
 
+              console.log(`[OUTBOX] Balance de ${from}: ${balanceA.toString()} wei (${ethers.formatUnits(balanceA, decimals)} AP)`);
+              console.log(`[OUTBOX] Allowance de ${from} hacia ${wallet.address}: ${allowanceAB.toString()} wei (${ethers.formatUnits(allowanceAB, decimals)} AP)`);
+
               // Regla estricta: NO enviar si no alcanza (nunca "todo" ni parciales).
               if (balanceA < requested) {
-                markOutbox(offer_id, 'FAILED', `INSUFFICIENT_BALANCE:have=${balanceA.toString()} need=${requested.toString()}`, () => {});
+                const errorMsg = `INSUFFICIENT_BALANCE:have=${balanceA.toString()} need=${requested.toString()}`;
+                console.error(`[OUTBOX] ❌ ${offer_id}: ${errorMsg}`);
+                markOutbox(offer_id, 'FAILED', errorMsg, () => {});
                 return;
               }
+              
+              // Si no hay suficiente allowance, intentar hacer approve automáticamente
               if (allowanceAB < requested) {
-                markOutbox(offer_id, 'FAILED', `INSUFFICIENT_ALLOWANCE:have=${allowanceAB.toString()} need=${requested.toString()}`, () => {});
-                return;
+                console.log(`[OUTBOX] Allowance insuficiente. Intentando approve automático...`);
+                const approveSuccess = await ensureAllowance(from, requested);
+                
+                if (!approveSuccess) {
+                  const errorMsg = `INSUFFICIENT_ALLOWANCE:have=${allowanceAB.toString()} need=${requested.toString()} (approve automático falló)`;
+                  console.error(`[OUTBOX] ❌ ${offer_id}: ${errorMsg}`);
+                  markOutbox(offer_id, 'FAILED', errorMsg, () => {});
+                  return;
+                }
+                
+                // Verificar allowance nuevamente después del approve
+                const newAllowance = await tokenContract.allowance(from, wallet.address);
+                console.log(`[OUTBOX] ✅ Approve exitoso. Nuevo allowance: ${newAllowance.toString()} wei`);
+                
+                if (newAllowance < requested) {
+                  const errorMsg = `INSUFFICIENT_ALLOWANCE_AFTER_APPROVE:have=${newAllowance.toString()} need=${requested.toString()}`;
+                  console.error(`[OUTBOX] ❌ ${offer_id}: ${errorMsg}`);
+                  markOutbox(offer_id, 'FAILED', errorMsg, () => {});
+                  return;
+                }
               }
 
               // Log defensivo para auditoría
@@ -752,9 +841,6 @@ app.listen(PORT, HOST, () => {
   console.log(`RPCs activos:`);
   urls.forEach((u, i) => console.log(`  [${i + 1}] ${u}`));
   console.log(`Contrato: ${CONTRACT_ADDRESS}`);
-  console.log(`📊 Límites configurados:`);
-  console.log(`   - Máximo por voucher: ${OFFLINE_VOUCHER_MAX_AP} AP`);
-  console.log(`   - Máximo diario por buyer: ${OFFLINE_BUYER_DAILY_MAX_AP} AP`);
   processOutboxOnce();
 });
 
@@ -779,6 +865,90 @@ app.post('/v1/debug/canonical', (req, res) => {
     res.status(200).json({ canonical });
   } catch (e) {
     res.status(400).json({ error: String(e.message) });
+  }
+});
+
+// GET /v1/debug/outbox - Ver estado del outbox
+app.get('/v1/debug/outbox', async (req, res) => {
+  try {
+    db.all(`
+      SELECT o.offer_id, o.state, o.last_error, o.created_at, o.updated_at,
+             v.buyer_address, v.seller_address, v.amount_ap_str, v.tx_hash, v.status, v.onchain_status
+      FROM outbox o
+      LEFT JOIN vouchers v ON o.offer_id = v.offer_id
+      ORDER BY o.updated_at DESC
+      LIMIT 20
+    `, [], async (err, rows) => {
+      if (err) {
+        return res.status(500).json({ error: 'Error consultando outbox', error_code: 'DB_ERROR' });
+      }
+      
+      const results = await Promise.all(rows.map(async (row) => {
+        let balance = null;
+        let allowance = null;
+        
+        if (row.buyer_address) {
+          try {
+            const decimals = await getDecimals();
+            balance = await tokenContract.balanceOf(row.buyer_address);
+            allowance = await tokenContract.allowance(row.buyer_address, wallet.address);
+            return {
+              offer_id: row.offer_id,
+              state: row.state,
+              last_error: row.last_error,
+              created_at: new Date(row.created_at * 1000).toISOString(),
+              updated_at: new Date(row.updated_at * 1000).toISOString(),
+              buyer_address: row.buyer_address,
+              seller_address: row.seller_address,
+              amount_ap_str: row.amount_ap_str,
+              tx_hash: row.tx_hash,
+              status: row.status,
+              onchain_status: row.onchain_status,
+              balance_ap: ethers.formatUnits(balance, decimals),
+              allowance_ap: ethers.formatUnits(allowance, decimals),
+              balance_wei: balance.toString(),
+              allowance_wei: allowance.toString()
+            };
+          } catch (e) {
+            return {
+              offer_id: row.offer_id,
+              state: row.state,
+              last_error: row.last_error || `Error consultando balance/allowance: ${e.message}`,
+              created_at: new Date(row.created_at * 1000).toISOString(),
+              updated_at: new Date(row.updated_at * 1000).toISOString(),
+              buyer_address: row.buyer_address,
+              seller_address: row.seller_address,
+              amount_ap_str: row.amount_ap_str,
+              tx_hash: row.tx_hash,
+              status: row.status,
+              onchain_status: row.onchain_status
+            };
+          }
+        }
+        
+        return {
+          offer_id: row.offer_id,
+          state: row.state,
+          last_error: row.last_error,
+          created_at: new Date(row.created_at * 1000).toISOString(),
+          updated_at: new Date(row.updated_at * 1000).toISOString(),
+          buyer_address: row.buyer_address,
+          seller_address: row.seller_address,
+          amount_ap_str: row.amount_ap_str,
+          tx_hash: row.tx_hash,
+          status: row.status,
+          onchain_status: row.onchain_status
+        };
+      }));
+      
+      res.status(200).json({
+        contract_address: CONTRACT_ADDRESS,
+        mother_address: wallet.address,
+        outbox_items: results
+      });
+    });
+  } catch (e) {
+    res.status(500).json({ error: String(e.message) });
   }
 });
 
@@ -807,8 +977,6 @@ app.get('/v1/debug/daily-limit/:buyer_address', (req, res) => {
           buyer_address: buyerAddress,
           start_of_day: new Date(startOfDay * 1000).toISOString(),
           total_today: total,
-          limit: OFFLINE_BUYER_DAILY_MAX_AP,
-          remaining: Math.max(0, OFFLINE_BUYER_DAILY_MAX_AP - total),
           transactions: rows.map(r => ({
             offer_id: r.offer_id,
             amount_ap: r.amount_ap_str,

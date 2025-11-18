@@ -9,6 +9,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import android.app.Application
 import androidx.compose.runtime.*
+import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -51,17 +52,16 @@ fun BuyerReceiptScreen(
     var showPdfDialog by remember { mutableStateOf(false) }
     var pdfUri by remember { mutableStateOf<android.net.Uri?>(null) }
     
+    // Obtener el voucher desde la base de datos para mostrar el estado real
+    val allVouchers by viewModel.allVouchers.collectAsState(initial = emptyList())
+    val voucher = allVouchers.find { it.id == transactionId }
+    val voucherStatus = voucher?.status ?: com.g22.offline_blockchain_payments.ui.data.VoucherStatus.GUARDADO_SIN_SENAL
+    
     // Guardar automáticamente al cargar la pantalla
     LaunchedEffect(Unit) {
         if (!isSaved) {
-            // Guardar voucher en base de datos local
-            viewModel.createVoucher(
-                role = Role.BUYER,
-                amountAp = amount,
-                counterparty = to,
-                buyerAlias = from,
-                sellerAlias = to
-            )
+            // NOTA: El voucher ya se creó con createSettledVoucher() en MainActivity
+            // No es necesario crear otro voucher aquí
             
             // Generar y guardar PDF automáticamente
             val pdfResult = PdfGenerator.generateReceiptPdf(
@@ -280,7 +280,7 @@ fun BuyerReceiptScreen(
                     
                     Spacer(modifier = Modifier.height(16.dp))
                     
-                    // Estado
+                    // Estado (dinámico desde la base de datos)
                     Text(
                         text = "Estado",
                         color = LightSteelBlue,
@@ -288,8 +288,18 @@ fun BuyerReceiptScreen(
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "Guardado sin señal",
-                        color = White,
+                        text = when (voucherStatus) {
+                            com.g22.offline_blockchain_payments.ui.data.VoucherStatus.GUARDADO_SIN_SENAL -> "Guardado sin señal"
+                            com.g22.offline_blockchain_payments.ui.data.VoucherStatus.ENVIANDO -> "Enviando..."
+                            com.g22.offline_blockchain_payments.ui.data.VoucherStatus.RECEIVED -> "Recibido por el servidor"
+                            com.g22.offline_blockchain_payments.ui.data.VoucherStatus.SUBIDO_OK -> "Confirmado en blockchain"
+                            com.g22.offline_blockchain_payments.ui.data.VoucherStatus.ERROR -> "Error: ${voucher?.lastError ?: "Desconocido"}"
+                        },
+                        color = when (voucherStatus) {
+                            com.g22.offline_blockchain_payments.ui.data.VoucherStatus.SUBIDO_OK -> Color(0xFF00FFB3) // Verde
+                            com.g22.offline_blockchain_payments.ui.data.VoucherStatus.ERROR -> Color(0xFFFF6B6B) // Rojo
+                            else -> White
+                        },
                         fontSize = 15.sp
                     )
                 }

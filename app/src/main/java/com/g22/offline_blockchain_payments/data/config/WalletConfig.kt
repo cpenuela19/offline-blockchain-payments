@@ -18,6 +18,9 @@ object WalletConfig {
     // === Claves privadas (DEMO) ===
     // Estas DEBEN coincidir exactamente con PRIV_KEY_A y PRIV_KEY_B del backend (.env)
 
+    // NOTA: Las claves están invertidas respecto a los roles en el backend
+    // PRIV_KEY_A deriva a 0x8846... que usamos como BUYER
+    // PRIV_KEY_B deriva a 0xef2a... que usamos como SELLER
     // PRIV_KEY_A (Juan / Buyer)
     const val BUYER_PRIVATE_KEY: String =
         "0xede9ad126ad894521fa6ee36fb8b5b01df22b250e3b334ec66a463267eaebdbc"
@@ -29,8 +32,10 @@ object WalletConfig {
     // === Direcciones esperadas (del backend .env) ===
     // Estas son las direcciones que el backend espera para A_ADDRESS y B_ADDRESS
     // Se usan para validar que las claves privadas son correctas
-    private const val EXPECTED_BUYER_ADDRESS = "0xef2a6965823679785813acc2bb8bec7872b660a0"
-    private const val EXPECTED_SELLER_ADDRESS = "0x8846f77a51371269a9e84310cc978154adbf7cf8"
+    // NOTA: PRIV_KEY_A deriva a 0x8846... (SELLER), PRIV_KEY_B deriva a 0xef2a... (BUYER)
+    // Por lo tanto, las claves están invertidas respecto a los roles
+    private const val EXPECTED_BUYER_ADDRESS = "0x8846f77a51371269a9e84310cc978154adbf7cf8" // PRIV_KEY_A
+    private const val EXPECTED_SELLER_ADDRESS = "0xef2a6965823679785813acc2bb8bec7872b660a0" // PRIV_KEY_B
 
     // === Direcciones derivadas de las claves privadas ===
     // Si todo está bien, estas deberían coincidir con las direcciones que usa el backend.
