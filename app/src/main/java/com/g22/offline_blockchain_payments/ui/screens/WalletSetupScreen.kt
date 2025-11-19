@@ -31,18 +31,34 @@ fun WalletSetupScreen(
     val setupState by viewModel.setupState.collectAsState()
     android.util.Log.d("WalletSetupScreen", "📊 Estado actual: $setupState")
     var showSeedPhrase by remember { mutableStateOf(false) }
+    var showRestorePhrase by remember { mutableStateOf(false) }
     var showPinSetup by remember { mutableStateOf(false) }
     var pinInput by remember { mutableStateOf("") }
     var confirmPinInput by remember { mutableStateOf("") }
 
     // Observar cambios de estado
     LaunchedEffect(setupState) {
+        android.util.Log.d("WalletSetupScreen", "🔄 LaunchedEffect: setupState cambió a $setupState")
         when (setupState) {
+            is WalletSetupViewModel.SetupState.Initial -> {
+                android.util.Log.d("WalletSetupScreen", "🔄 Estado Initial: reseteando todas las pantallas")
+                showSeedPhrase = false
+                showRestorePhrase = false
+                showPinSetup = false
+            }
             is WalletSetupViewModel.SetupState.WalletGenerated -> {
                 showSeedPhrase = true
+                showRestorePhrase = false
+                showPinSetup = false
+            }
+            is WalletSetupViewModel.SetupState.ShowingRestorePhrase -> {
+                showRestorePhrase = true
+                showSeedPhrase = false
+                showPinSetup = false
             }
             is WalletSetupViewModel.SetupState.SeedPhraseConfirmed -> {
                 showSeedPhrase = false
+                showRestorePhrase = false
                 showPinSetup = true
             }
             is WalletSetupViewModel.SetupState.Completed -> {
@@ -66,6 +82,20 @@ fun WalletSetupScreen(
                     }
                 )
             }
+            showRestorePhrase || setupState is WalletSetupViewModel.SetupState.ShowingRestorePhrase -> {
+                RestorePhraseInputScreen(
+                    onConfirm = { phrase10 ->
+                        viewModel.restoreWallet(phrase10)
+                    },
+                    onBack = {
+                        android.util.Log.d("WalletSetupScreen", "🔵 Botón Atrás presionado, llamando goBackToInitial()")
+                        viewModel.goBackToInitial()
+                    },
+                    errorMessage = if (setupState is WalletSetupViewModel.SetupState.Error) {
+                        (setupState as WalletSetupViewModel.SetupState.Error).message
+                    } else null
+                )
+            }
             showPinSetup -> {
                 PinSetupScreen(
                     pinInput = pinInput,
@@ -84,10 +114,17 @@ fun WalletSetupScreen(
             }
             else -> {
                 WelcomeScreen(
-                    onContinue = {
-                        android.util.Log.d("WalletSetupScreen", "🟢 onContinue llamado, llamando viewModel.generateWallet()")
-                        viewModel.generateWallet()
-                    }
+                    onCreateWallet = {
+                        android.util.Log.d("WalletSetupScreen", "🟢 onCreateWallet llamado, llamando viewModel.createWallet()")
+                        viewModel.createWallet()
+                    },
+                    onRestoreWallet = {
+                        android.util.Log.d("WalletSetupScreen", "🟢 onRestoreWallet llamado, navegando a pantalla de entrada")
+                        viewModel.startRestoreFlow()
+                    },
+                    errorMessage = if (setupState is WalletSetupViewModel.SetupState.Error) {
+                        (setupState as WalletSetupViewModel.SetupState.Error).message
+                    } else null
                 )
             }
         }
@@ -96,7 +133,9 @@ fun WalletSetupScreen(
 
 @Composable
 private fun WelcomeScreen(
-    onContinue: () -> Unit
+    onCreateWallet: () -> Unit,
+    onRestoreWallet: () -> Unit,
+    errorMessage: String? = null
 ) {
     Column(
         modifier = Modifier
@@ -129,7 +168,7 @@ private fun WelcomeScreen(
 
         // Descripción
         Text(
-            text = "Para comenzar, necesitamos crear tu wallet seguro.",
+            text = "Para comenzar, crea un nuevo wallet o restaura uno existente.",
             fontSize = 16.sp,
             color = LightSteelBlue,
             textAlign = TextAlign.Center,
@@ -157,7 +196,7 @@ private fun WelcomeScreen(
                 )
                 Spacer(modifier = Modifier.height(12.dp))
                 InfoItem("🔐 Clave privada cifrada y segura")
-                InfoItem("📝 Frase de recuperación (6 palabras en español)")
+                InfoItem("📝 Frase de recuperación (10 palabras en español)")
                 InfoItem("🔒 Protección con PIN de 4 dígitos")
                 InfoItem("👆 Autenticación biométrica opcional")
             }
@@ -165,11 +204,11 @@ private fun WelcomeScreen(
 
         Spacer(modifier = Modifier.height(48.dp))
 
-        // Botón de continuar
+        // Botón Crear Wallet
         Button(
             onClick = {
                 android.util.Log.d("WalletSetupScreen", "🔵 Botón 'Crear Wallet' presionado")
-                onContinue()
+                onCreateWallet()
             },
             modifier = Modifier
                 .fillMaxWidth()
@@ -185,6 +224,64 @@ private fun WelcomeScreen(
                 fontWeight = FontWeight.Bold,
                 color = White
             )
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Botón Ya tengo wallet
+        Button(
+            onClick = {
+                android.util.Log.d("WalletSetupScreen", "🔵 Botón 'Ya tengo wallet' presionado")
+                onRestoreWallet()
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = EmeraldGreen
+            ),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Text(
+                text = "Ya tengo wallet",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold,
+                color = White
+            )
+        }
+
+        // Mensaje de error
+        if (errorMessage != null) {
+            Spacer(modifier = Modifier.height(16.dp))
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = YellowWarning.copy(alpha = 0.2f)
+                ),
+                shape = RoundedCornerShape(12.dp),
+                border = androidx.compose.foundation.BorderStroke(
+                    2.dp,
+                    YellowWarning
+                )
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp)
+                ) {
+                    Text(
+                        text = "⚠️ Error",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = YellowWarning
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = errorMessage,
+                        fontSize = 14.sp,
+                        color = White,
+                        lineHeight = 20.sp
+                    )
+                }
+            }
         }
     }
 }
