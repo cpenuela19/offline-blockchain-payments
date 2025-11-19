@@ -4,14 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
-import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.SnackbarResult
-import androidx.compose.material3.SnackbarDuration
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
@@ -20,8 +13,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.g22.offline_blockchain_payments.R
 import com.g22.offline_blockchain_payments.ui.theme.*
-import com.g22.offline_blockchain_payments.ui.viewmodel.VoucherViewModel
-import kotlinx.coroutines.launch
 
 @Composable
 fun DrawerMenu(
@@ -30,9 +21,7 @@ fun DrawerMenu(
     onSwapClick: () -> Unit,
     onHistoryClick: () -> Unit,
     onSettingsClick: () -> Unit,
-    onLogoutClick: () -> Unit,
-    voucherViewModel: VoucherViewModel? = null,
-    snackbarHostState: SnackbarHostState? = null
+    onLogoutClick: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -109,44 +98,10 @@ fun DrawerMenu(
             
             MenuItemRow(
                 iconRes = R.drawable.ic_settings,
-                text = "Configuración",
+                text = "Tus datos",
                 onClick = onSettingsClick
             )
             MenuDivider()
-            
-            // Botón temporal de prueba para /v1/vouchers/settle
-            // Solo visible en builds de debug (usar BuildConfig.DEBUG cuando esté disponible)
-            // Por ahora visible siempre, pero marcado como TODO para producción
-            @Suppress("ConstantConditionIf")
-            if (true && voucherViewModel != null) { // TODO: Cambiar a BuildConfig.DEBUG en producción
-                val testResult by voucherViewModel.settleTestResult.collectAsState()
-                val scope = rememberCoroutineScope()
-                
-                MenuItemRow(
-                    iconRes = R.drawable.ic_settings,
-                    text = "🧪 TEST SETTLE",
-                    onClick = {
-                        voucherViewModel.testSettleVoucher()
-                    }
-                )
-                
-                // Mostrar resultado en Snackbar
-                LaunchedEffect(testResult) {
-                    testResult?.let { result ->
-                        snackbarHostState?.let { snackbar ->
-                            scope.launch {
-                                val snackbarResult = snackbar.showSnackbar(
-                                    message = result,
-                                    duration = SnackbarDuration.Long
-                                )
-                                if (snackbarResult == SnackbarResult.Dismissed) {
-                                    voucherViewModel.clearSettleTestResult()
-                                }
-                            }
-                        }
-                    }
-                }
-            }
         }
     }
 }

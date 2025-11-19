@@ -147,14 +147,12 @@ class MainActivity : ComponentActivity() {
                             },
                             onSettingsClick = {
                                 scope.launch { drawerState.close() }
-                                // Navegar a pantalla de ajustes (por implementar)
+                                navController.navigate("user/data")
                             },
                             onLogoutClick = {
                                 scope.launch { drawerState.close() }
                                 // Implementar lógica de cerrar sesión
                             },
-                            voucherViewModel = voucherViewModel,
-                            snackbarHostState = snackbarHostState
                         )
                     },
                     scrimColor = Color.Black.copy(alpha = 0.5f)
@@ -361,6 +359,15 @@ class MainActivity : ComponentActivity() {
                                 },
                                 onMenuClick = {
                                     scope.launch { drawerState.open() }
+                                }
+                            )
+                        }
+                        
+                        // User Data (Tus datos)
+                        composable("user/data") {
+                            UserDataScreen(
+                                onBack = {
+                                    navController.popBackStack()
                                 }
                             )
                         }
