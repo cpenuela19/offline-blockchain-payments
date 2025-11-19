@@ -9,6 +9,7 @@ import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.*
+import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
@@ -23,6 +24,10 @@ import com.g22.offline_blockchain_payments.ui.theme.OfflineblockchainpaymentsThe
 import com.g22.offline_blockchain_payments.ui.viewmodel.VoucherViewModel
 import com.g22.offline_blockchain_payments.ui.viewmodel.VoucherViewModelFactory
 import com.g22.offline_blockchain_payments.ui.viewmodel.WalletViewModel
+import com.g22.offline_blockchain_payments.ui.viewmodel.WalletSetupViewModel
+import com.g22.offline_blockchain_payments.ui.viewmodel.WalletUnlockViewModel
+import com.g22.offline_blockchain_payments.data.wallet.WalletManager
+import androidx.lifecycle.ViewModelProvider
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Alignment
@@ -60,16 +65,65 @@ class MainActivity : ComponentActivity() {
                     factory = VoucherViewModelFactory(applicationContext as android.app.Application)
                 )
                 
+                // ViewModels para wallet setup y unlock
+                val walletSetupViewModel: WalletSetupViewModel = viewModel(
+                    factory = object : ViewModelProvider.Factory {
+                        @Suppress("UNCHECKED_CAST")
+                        override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
+                            return WalletSetupViewModel(application) as T
+                        }
+                    }
+                )
+                val walletUnlockViewModel: WalletUnlockViewModel = viewModel(
+                    factory = object : ViewModelProvider.Factory {
+                        @Suppress("UNCHECKED_CAST")
+                        override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
+                            return WalletUnlockViewModel(application) as T
+                        }
+                    }
+                )
+                
                 // Snackbar para mostrar resultados del test
                 val snackbarHostState = remember { SnackbarHostState() }
                 
                 val navController = rememberNavController()
                 val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
-                val scope = rememberCoroutineScope()
                 var currentRole by remember { mutableStateOf(Role.BUYER) }
-                        var buyerAmount by remember { mutableStateOf(0L) }
-                        var sellerAmount by remember { mutableStateOf(0L) }
-                        var currentTransactionId by remember { mutableStateOf("") }
+                val scope = rememberCoroutineScope()
+                var buyerAmount by remember { mutableStateOf(0L) }
+                var sellerAmount by remember { mutableStateOf(0L) }
+                var currentTransactionId by remember { mutableStateOf("") }
+                
+                // Verificar estado del wallet al iniciar
+                var walletChecked by remember { mutableStateOf(false) }
+                LaunchedEffect(Unit) {
+                    if (!walletChecked) {
+                        walletChecked = true
+                        val walletExists = WalletManager.walletExists(applicationContext)
+                        val walletUnlocked = WalletManager.isWalletUnlocked()
+                        
+                        when {
+                            !walletExists -> {
+                                // No hay wallet, ir a setup
+                                navController.navigate("wallet/setup") {
+                                    popUpTo(0) { inclusive = true }
+                                }
+                            }
+                            !walletUnlocked -> {
+                                // Hay wallet pero está bloqueado, ir a unlock
+                                navController.navigate("wallet/unlock") {
+                                    popUpTo(0) { inclusive = true }
+                                }
+                            }
+                            else -> {
+                                // Wallet desbloqueado, ir a pantalla principal
+                                navController.navigate("initial_choice") {
+                                    popUpTo(0) { inclusive = true }
+                                }
+                            }
+                        }
+                    }
+                }
                 
                 ModalNavigationDrawer(
                     drawerState = drawerState,
@@ -106,7 +160,44 @@ class MainActivity : ComponentActivity() {
                     scrimColor = Color.Black.copy(alpha = 0.5f)
                 ) {
                     Box(modifier = Modifier.fillMaxSize()) {
-                        NavHost(navController = navController, startDestination = "initial_choice") {
+                        NavHost(navController = navController, startDestination = "wallet/check") {
+                        // Wallet setup y unlock
+                        composable("wallet/setup") {
+                            WalletSetupScreen(
+                                onSetupComplete = {
+                                    // Wallet creado, ir a unlock para la primera vez
+                                    navController.navigate("wallet/unlock") {
+                                        popUpTo("wallet/setup") { inclusive = true }
+                                    }
+                                },
+                                viewModel = walletSetupViewModel
+                            )
+                            android.util.Log.d("MainActivity", "🔵 WalletSetupScreen renderizado")
+                        }
+                        
+                        composable("wallet/unlock") {
+                            WalletUnlockScreen(
+                                onUnlocked = {
+                                    // Wallet desbloqueado, ir a pantalla principal
+                                    navController.navigate("initial_choice") {
+                                        popUpTo("wallet/unlock") { inclusive = true }
+                                    }
+                                },
+                                viewModel = walletUnlockViewModel
+                            )
+                        }
+                        
+                        composable("wallet/check") {
+                            // Pantalla de carga mientras se verifica el wallet
+                            // Se navega automáticamente según el estado
+                            Box(
+                                modifier = Modifier.fillMaxSize(),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                androidx.compose.material3.CircularProgressIndicator()
+                            }
+                        }
+                        
                         composable("initial_choice") {
                             InitialChoiceScreen(
                                 onSellClick = {
@@ -185,7 +276,8 @@ class MainActivity : ComponentActivity() {
                         }
                         
             composable("buyer/receipt") {
-                val concept = paymentBleViewModel.paymentTransaction.value?.concept
+                val paymentTransaction by paymentBleViewModel.paymentTransaction.collectAsState()
+                val concept = paymentTransaction?.concept
                 BuyerReceiptScreen(
                     amount = buyerAmount,
                     from = "Juan P.",
@@ -239,7 +331,8 @@ class MainActivity : ComponentActivity() {
                         }
                         
             composable("seller/receipt") {
-                val concept = paymentBleViewModel.paymentTransaction.value?.concept
+                val paymentTransaction by paymentBleViewModel.paymentTransaction.collectAsState()
+                val concept = paymentTransaction?.concept
                 SellerReceiptScreen(
                     amount = sellerAmount,
                     from = "Juan P.",
@@ -284,8 +377,23 @@ class MainActivity : ComponentActivity() {
         }
     }
     
+    override fun onPause() {
+        super.onPause()
+        // Borrar clave privada de memoria al pasar a background
+        WalletManager.clearUnlockedWallet()
+    }
+    
+    override fun onResume() {
+        super.onResume()
+        // Verificar si el wallet necesita desbloqueo al volver a foreground
+        // La navegación se maneja en el LaunchedEffect
+    }
+    
     override fun onDestroy() {
         super.onDestroy()
+        // Borrar clave privada de memoria
+        WalletManager.clearUnlockedWallet()
+        
         // Limpiar recursos BLE
         if (::bleRepository.isInitialized) {
             bleRepository.stopGattServer()

@@ -84,6 +84,18 @@ dependencies {
     // Ethereum crypto (para firmas ECDSA)
     implementation("org.web3j:crypto:4.9.8")
     
+    // BouncyCastle para web3j (necesario para ECDSA secp256k1)
+    implementation("org.bouncycastle:bcprov-jdk15on:1.70")
+    
+    // BIP39 para seed phrases
+    implementation("org.bitcoinj:bitcoinj-core:0.16.2") {
+        exclude(group = "org.bouncycastle", module = "bcprov-jdk15to18")
+        exclude(group = "org.bouncycastle", module = "bcprov-jdk15on")
+    }
+    
+    // AndroidX Biometric para autenticación biométrica
+    implementation("androidx.biometric:biometric:1.1.0")
+    
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
