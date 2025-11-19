@@ -51,7 +51,7 @@ object WalletManager {
     /**
      * Genera un nuevo wallet.
      * 
-     * @return Pair<privateKey, seedPhrase> - Clave privada y seed phrase (12 palabras)
+     * @return Pair<privateKey, seedPhrase> - Clave privada y seed phrase (6 palabras en español)
      */
     fun generateNewWallet(): Pair<String, List<String>> {
         Log.d(TAG, "🔄 Iniciando generación de wallet...")

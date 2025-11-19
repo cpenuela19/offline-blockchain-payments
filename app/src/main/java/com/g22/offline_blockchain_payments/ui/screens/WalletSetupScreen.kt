@@ -157,7 +157,7 @@ private fun WelcomeScreen(
                 )
                 Spacer(modifier = Modifier.height(12.dp))
                 InfoItem("🔐 Clave privada cifrada y segura")
-                InfoItem("📝 Frase de recuperación (12 palabras)")
+                InfoItem("📝 Frase de recuperación (6 palabras en español)")
                 InfoItem("🔒 Protección con PIN de 4 dígitos")
                 InfoItem("👆 Autenticación biométrica opcional")
             }
