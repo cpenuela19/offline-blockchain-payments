@@ -38,6 +38,7 @@ import com.g22.offline_blockchain_payments.ui.util.NumberFormatter
 @Composable
 fun ReceiveScreen(
     viewModel: PaymentBleViewModel,
+    walletViewModel: com.g22.offline_blockchain_payments.ui.viewmodel.WalletViewModel,
     onBack: () -> Unit,
     onPaymentReceived: (amount: Long, transactionId: String) -> Unit
 ) {
@@ -142,6 +143,7 @@ fun ReceiveScreen(
             if (!showQR) {
                 // Primera pantalla: Ingresar monto
                 ReceiveAmountInput(
+                    walletViewModel = walletViewModel,
                     amountToReceive = amountToReceive,
                     concept = concept,
                     onAmountChange = { amountToReceive = it },
@@ -183,6 +185,7 @@ fun ReceiveScreen(
 
 @Composable
 fun ReceiveAmountInput(
+    walletViewModel: com.g22.offline_blockchain_payments.ui.viewmodel.WalletViewModel,
     amountToReceive: TextFieldValue,
     concept: String,
     onAmountChange: (TextFieldValue) -> Unit,
@@ -190,6 +193,7 @@ fun ReceiveAmountInput(
     onGenerateQR: () -> Unit,
     onCancel: () -> Unit
 ) {
+    val availablePoints by walletViewModel.availablePoints.collectAsState()
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally
@@ -215,7 +219,7 @@ fun ReceiveAmountInput(
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "58.200 AP",
+                    text = "${NumberFormatter.formatAmount(availablePoints)} AP",
                     color = SellerPrimary,
                     fontSize = 48.sp,
                     fontWeight = FontWeight.Bold
