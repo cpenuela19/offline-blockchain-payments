@@ -307,6 +307,7 @@ class MainActivity : ComponentActivity() {
                         composable("seller/charge") {
                             ReceiveScreen(
                                 viewModel = paymentBleViewModel,
+                                walletViewModel = walletViewModel,
                                 onBack = {
                                     navController.popBackStack()
                                 },
