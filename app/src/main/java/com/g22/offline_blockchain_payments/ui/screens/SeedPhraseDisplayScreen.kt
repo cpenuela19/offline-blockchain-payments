@@ -103,7 +103,7 @@ fun SeedPhraseDisplayScreen(
                     
                     // Mensaje principal muy claro
                     Text(
-                        text = "ESTAS 6 PALABRAS EN ESTE ORDEN EXACTO SON LA ÚNICA MANERA DE RECUPERAR TU CUENTA SI PIERDES TU PIN DE 4 DÍGITOS.",
+                        text = "ESTAS 10 PALABRAS EN ESTE ORDEN EXACTO SON LA ÚNICA MANERA DE RECUPERAR TU CUENTA SI PIERDES TU PIN DE 4 DÍGITOS.",
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Bold,
                         color = White,
@@ -165,20 +165,20 @@ fun SeedPhraseDisplayScreen(
 
             Spacer(modifier = Modifier.height(32.dp))
 
-            // Grid de palabras (6 palabras en 3 columnas)
+            // Grid de palabras (10 palabras en 2 columnas)
             // Usar Column/Row en lugar de LazyVerticalGrid para evitar conflicto con scroll
             Column(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                seedPhrase.chunked(3).forEachIndexed { rowIndex, rowWords ->
+                seedPhrase.chunked(2).forEachIndexed { rowIndex, rowWords ->
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         rowWords.forEachIndexed { colIndex, word ->
-                            val wordIndex = rowIndex * 3 + colIndex
+                            val wordIndex = rowIndex * 2 + colIndex
                             Box(
                                 modifier = Modifier.weight(1f)
                             ) {
@@ -188,8 +188,8 @@ fun SeedPhraseDisplayScreen(
                                 )
                             }
                         }
-                        // Rellenar si la fila tiene menos de 3 palabras
-                        repeat(3 - rowWords.size) {
+                        // Rellenar si la fila tiene menos de 2 palabras
+                        repeat(2 - rowWords.size) {
                             Spacer(modifier = Modifier.weight(1f))
                         }
                     }
@@ -223,7 +223,7 @@ fun SeedPhraseDisplayScreen(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "Escribe estas 6 palabras EXACTAMENTE EN ESTE ORDEN en un lugar seguro.",
+                        text = "Escribe estas 10 palabras EXACTAMENTE EN ESTE ORDEN en un lugar seguro.",
                         fontSize = 15.sp,
                         color = White,
                         fontWeight = FontWeight.SemiBold,

@@ -40,6 +40,23 @@ object KeystoreHelper {
         val secretKeyEntry = keyStore.getEntry(KEY_ALIAS, null) as KeyStore.SecretKeyEntry
         return secretKeyEntry.secretKey
     }
+    
+    /**
+     * Fuerza la recreación de la clave eliminando la existente si hay problemas de autenticación.
+     */
+    fun recreateKeyIfNeeded() {
+        try {
+            val keyStore = KeyStore.getInstance(KEYSTORE_PROVIDER)
+            keyStore.load(null)
+            if (keyStore.containsAlias(KEY_ALIAS)) {
+                keyStore.deleteEntry(KEY_ALIAS)
+                Log.d(TAG, "✅ Clave existente eliminada, se recreará")
+            }
+            createKey()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error recreando clave: ${e.message}")
+        }
+    }
 
     /**
      * Crea una nueva clave AES en el Keystore con los requisitos de seguridad.
@@ -91,6 +108,20 @@ object KeystoreHelper {
             Log.d(TAG, "✅ Datos cifrados correctamente")
             byteArrayOf(*iv, *encrypted)
         } catch (e: Exception) {
+            // Si el error es de autenticación, intentar recrear la clave
+            if (e.message?.contains("not authenticated") == true || 
+                e.cause?.message?.contains("not authenticated") == true) {
+                Log.w(TAG, "⚠️ Clave requiere autenticación, recreando sin ese requisito...")
+                recreateKeyIfNeeded()
+                // Intentar de nuevo
+                val secretKey = initializeKey(context)
+                val cipher = Cipher.getInstance(TRANSFORMATION)
+                cipher.init(Cipher.ENCRYPT_MODE, secretKey)
+                val iv = cipher.iv
+                val encrypted = cipher.doFinal(data)
+                Log.d(TAG, "✅ Datos cifrados correctamente después de recrear clave")
+                return byteArrayOf(*iv, *encrypted)
+            }
             Log.e(TAG, "❌ Error cifrando datos: ${e.message}", e)
             throw Exception("Error cifrando datos: ${e.message ?: e.javaClass.simpleName}", e)
         }

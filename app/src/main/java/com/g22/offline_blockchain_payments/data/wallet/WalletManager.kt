@@ -49,50 +49,52 @@ object WalletManager {
     }
 
     /**
-     * Genera un nuevo wallet.
+     * DEPRECADO: La generación de wallet ahora se hace en el backend.
+     * Este método se mantiene por compatibilidad pero no debe usarse.
      * 
-     * @return Pair<privateKey, seedPhrase> - Clave privada y seed phrase (6 palabras en español)
+     * @deprecated Usar el backend para crear wallets
      */
+    @Deprecated("La generación de wallet ahora se hace en el backend")
     fun generateNewWallet(): Pair<String, List<String>> {
-        Log.d(TAG, "🔄 Iniciando generación de wallet...")
+        throw UnsupportedOperationException("La generación de wallet ahora se hace en el backend. Usa importPrivateKeyFromBackend() en su lugar.")
+    }
+
+    /**
+     * Importa una clave privada desde el backend y la cifra con Android Keystore.
+     * 
+     * @param context Context de Android
+     * @param privateKeyHex Clave privada en formato hexadecimal (con o sin prefijo 0x)
+     * @throws Exception Si falla el cifrado o la validación
+     */
+    fun importPrivateKeyFromBackend(context: Context, privateKeyHex: String) {
+        Log.d(TAG, "🔄 Importando clave privada desde backend...")
+        
         try {
-            // Generar 32 bytes aleatorios para la clave privada
-            val random = SecureRandom()
-            val privateKeyBytes = ByteArray(32)
-            random.nextBytes(privateKeyBytes)
-            
-            // Convertir a BigInteger y asegurar que esté en el rango válido
-            var privateKeyBigInt = BigInteger(1, privateKeyBytes)
-            
-            // Asegurar que la clave privada sea válida (1 <= key < SECP256K1_ORDER)
-            // Si es 0 o >= orden, regenerar
-            while (privateKeyBigInt == BigInteger.ZERO || privateKeyBigInt >= SECP256K1_ORDER) {
-                random.nextBytes(privateKeyBytes)
-                privateKeyBigInt = BigInteger(1, privateKeyBytes)
+            // Normalizar: asegurar que tenga prefijo 0x
+            val normalizedKey = if (privateKeyHex.startsWith("0x")) {
+                privateKeyHex
+            } else {
+                "0x$privateKeyHex"
             }
             
-            // Convertir a hex (64 caracteres = 32 bytes)
-            val keyHex = privateKeyBigInt.toString(16)
-            val privateKey = keyHex.padStart(64, '0')
-            val privateKeyWithPrefix = "0x$privateKey"
-            
-            Log.d(TAG, "✅ Clave privada generada (${privateKey.length} caracteres)")
-
-            // Generar seed phrase desde la clave privada (solo para mostrar al usuario)
-            val seedPhrase = try {
-                SeedPhraseGenerator.generateSeedPhraseFromPrivateKey(privateKeyWithPrefix)
-            } catch (e: Exception) {
-                Log.e(TAG, "❌ Error generando seed phrase: ${e.message}", e)
-                // Fallback: generar seed phrase aleatoria
-                SeedPhraseGenerator.generateRandomSeedPhrase()
+            // Validar formato
+            if (!normalizedKey.matches(Regex("^0x[0-9a-fA-F]{64}$"))) {
+                throw IllegalArgumentException("Formato de clave privada inválido")
             }
-
-            Log.d(TAG, "✅ Seed phrase generada: ${seedPhrase.size} palabras")
-            Log.d(TAG, "✅ Wallet generado. Dirección: ${getAddressFromPrivateKey(privateKeyWithPrefix)}")
-            return Pair(privateKeyWithPrefix, seedPhrase)
+            
+            // Validar que la clave esté en el rango válido
+            val keyBigInt = BigInteger(normalizedKey.removePrefix("0x"), 16)
+            if (keyBigInt == BigInteger.ZERO || keyBigInt >= SECP256K1_ORDER) {
+                throw IllegalArgumentException("Clave privada fuera del rango válido")
+            }
+            
+            // Guardar usando el método existente
+            saveWallet(normalizedKey, context)
+            
+            Log.d(TAG, "✅ Clave privada importada y cifrada correctamente")
+            Log.d(TAG, "✅ Dirección: ${getAddressFromPrivateKey(normalizedKey)}")
         } catch (e: Exception) {
-            Log.e(TAG, "❌ Error en generateNewWallet(): ${e.message}", e)
-            e.printStackTrace()
+            Log.e(TAG, "❌ Error importando clave privada: ${e.message}", e)
             throw e
         }
     }

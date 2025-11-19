@@ -23,6 +23,23 @@ interface VoucherApiService {
     suspend fun settleVoucher(
         @Body request: SettleRequest
     ): Response<SettleResponse>
+    
+    // ─────────────────────────── Wallet Endpoints ───────────────────────────
+    
+    @POST("/wallet/create")
+    suspend fun createWallet(
+        @Body request: CreateWalletRequest
+    ): Response<CreateWalletResponse>
+    
+    @POST("/auth/login-via-phrase")
+    suspend fun loginViaPhrase(
+        @Body request: LoginViaPhraseRequest
+    ): Response<LoginViaPhraseResponse>
+    
+    @GET("/wallet/private-key")
+    suspend fun getPrivateKey(
+        @Header("X-Session-Token") sessionToken: String
+    ): Response<PrivateKeyResponse>
 }
 
 data class BalanceResponse(

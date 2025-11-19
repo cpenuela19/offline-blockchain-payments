@@ -7,6 +7,9 @@ const cors = require('cors');
 const { ethers } = require('ethers');
 const sqlite3 = require('sqlite3').verbose();
 const rateLimit = require('express-rate-limit');
+const { encryptPrivateKey, decryptPrivateKey } = require('./crypto/aes');
+const { generatePhrase10, normalizePhrase, hashPhrase } = require('./utils/phraseGenerator');
+const { generateSessionToken } = require('./utils/sessionToken');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -200,6 +203,27 @@ function initDatabase() {
       migrateForOfflineSchema();
     }
   });
+
+  // Crear tabla users para el nuevo sistema de autenticación
+  db.run(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      phrase10_hash TEXT NOT NULL UNIQUE,
+      encrypted_private_key TEXT NOT NULL,
+      public_key TEXT NOT NULL,
+      address TEXT NOT NULL UNIQUE,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `, (err) => {
+    if (err) {
+      console.error('Error creando tabla users:', err);
+    } else {
+      console.log('Tabla users creada/verificada');
+      // Agregar columna session_token si no existe (migración)
+      db.run(`ALTER TABLE users ADD COLUMN session_token TEXT`, () => {});
+    }
+  });
 }
 
 // ─────────────────────── Helpers de outbox/migraciones ───────────────────────
@@ -325,6 +349,284 @@ function validateVoucherRequest(req) {
 }
 
 // ───────────────────────────── Endpoints ──────────────────────────────
+
+// POST /wallet/create
+app.post('/wallet/create', async (req, res) => {
+  try {
+    const { device_info } = req.body || {};
+
+    // Generar frase de 10 palabras
+    const phrase10 = generatePhrase10();
+    
+    // Normalizar y calcular hash
+    const phraseHash = hashPhrase(phrase10);
+    
+    // Generar clave privada ECDSA secp256k1
+    const userWallet = ethers.Wallet.createRandom();
+    const privateKey = userWallet.privateKey;
+    const publicKey = userWallet.publicKey;
+    const address = userWallet.address;
+    
+    // Cifrar clave privada
+    const encryptedPrivateKey = encryptPrivateKey(privateKey);
+    
+    // Guardar usuario en BD
+    const now = Math.floor(Date.now() / 1000);
+    db.run(
+      `INSERT INTO users (phrase10_hash, encrypted_private_key, public_key, address, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [phraseHash, encryptedPrivateKey, publicKey, address.toLowerCase(), now, now],
+      (err) => {
+        if (err) {
+          console.error('Error guardando usuario:', err);
+          if (err.message.includes('UNIQUE constraint failed')) {
+            return res.status(409).json({
+              error: 'Usuario ya existe',
+              error_code: 'USER_EXISTS'
+            });
+          }
+          return res.status(500).json({
+            error: 'Error interno',
+            error_code: 'DB_ERROR'
+          });
+        }
+        
+        // Generar token de sesión
+        const sessionToken = generateSessionToken();
+        
+        // Guardar session_token en la base de datos
+        db.run(
+          'UPDATE users SET session_token = ? WHERE phrase10_hash = ?',
+          [sessionToken, phraseHash],
+          (updateErr) => {
+            if (updateErr) {
+              console.error('Error guardando session_token:', updateErr);
+            }
+          }
+        );
+        
+        // Respuesta (NO incluir clave privada)
+        res.status(200).json({
+          phrase10: phrase10,
+          address: address,
+          public_key: publicKey,
+          session_token: sessionToken
+        });
+      }
+    );
+  } catch (error) {
+    console.error('Error en POST /wallet/create:', error);
+    res.status(500).json({
+      error: 'Error interno del servidor',
+      error_code: 'INTERNAL_ERROR'
+    });
+  }
+});
+
+// POST /auth/login-via-phrase
+app.post('/auth/login-via-phrase', async (req, res) => {
+  try {
+    const { phrase10 } = req.body || {};
+    
+    if (!Array.isArray(phrase10) || phrase10.length !== 10) {
+      return res.status(400).json({
+        error: 'phrase10 debe ser un array de 10 palabras',
+        error_code: 'BAD_REQUEST'
+      });
+    }
+    
+    // Normalizar y calcular hash
+    let phraseHash;
+    try {
+      phraseHash = hashPhrase(phrase10);
+    } catch (e) {
+      return res.status(400).json({
+        error: 'Error normalizando frase: ' + e.message,
+        error_code: 'BAD_REQUEST'
+      });
+    }
+    
+    // Buscar usuario por hash
+    db.get(
+      'SELECT address, public_key FROM users WHERE phrase10_hash = ?',
+      [phraseHash],
+      (err, row) => {
+        if (err) {
+          console.error('Error consultando usuario:', err);
+          return res.status(500).json({
+            error: 'Error interno',
+            error_code: 'DB_ERROR'
+          });
+        }
+        
+        if (!row) {
+          return res.status(401).json({
+            error: 'Frase inválida o usuario no encontrado',
+            error_code: 'INVALID_PHRASE'
+          });
+        }
+        
+        // Generar token de sesión
+        const sessionToken = generateSessionToken();
+        
+        // Guardar session_token en la base de datos
+        db.run(
+          'UPDATE users SET session_token = ? WHERE phrase10_hash = ?',
+          [sessionToken, phraseHash],
+          (updateErr) => {
+            if (updateErr) {
+              console.error('Error guardando session_token:', updateErr);
+            }
+          }
+        );
+        
+        // Respuesta (NO incluir clave privada)
+        res.status(200).json({
+          address: row.address,
+          public_key: row.public_key,
+          session_token: sessionToken
+        });
+      }
+    );
+  } catch (error) {
+    console.error('Error en POST /auth/login-via-phrase:', error);
+    res.status(500).json({
+      error: 'Error interno del servidor',
+      error_code: 'INTERNAL_ERROR'
+    });
+  }
+});
+
+// GET /wallet/private-key
+app.get('/wallet/private-key', async (req, res) => {
+  try {
+    const sessionToken = req.headers['x-session-token'] || req.query.session_token;
+    
+    if (!sessionToken) {
+      return res.status(401).json({
+        error: 'session_token requerido',
+        error_code: 'MISSING_SESSION_TOKEN'
+      });
+    }
+    
+    // Buscar usuario por session_token
+    db.get(
+      'SELECT encrypted_private_key, address FROM users WHERE session_token = ?',
+      [sessionToken],
+      (err, row) => {
+        if (err) {
+          console.error('Error consultando usuario:', err);
+          return res.status(500).json({
+            error: 'Error interno',
+            error_code: 'DB_ERROR'
+          });
+        }
+        
+        if (!row) {
+          return res.status(401).json({
+            error: 'Token de sesión inválido o expirado',
+            error_code: 'INVALID_SESSION_TOKEN'
+          });
+        }
+        
+        // Descifrar clave privada
+        let privateKey;
+        try {
+          privateKey = decryptPrivateKey(row.encrypted_private_key);
+        } catch (e) {
+          console.error('Error descifrando clave privada:', e);
+          return res.status(500).json({
+            error: 'Error descifrando clave privada',
+            error_code: 'DECRYPT_ERROR'
+          });
+        }
+        
+        // Respuesta con clave privada
+        res.status(200).json({
+          private_key: privateKey
+        });
+      }
+    );
+  } catch (error) {
+    console.error('Error en GET /wallet/private-key:', error);
+    res.status(500).json({
+      error: 'Error interno del servidor',
+      error_code: 'INTERNAL_ERROR'
+    });
+  }
+});
+
+// POST /wallet/identity-debug
+app.post('/wallet/identity-debug', async (req, res) => {
+  try {
+    const { phrase10 } = req.body || {};
+    
+    if (!Array.isArray(phrase10) || phrase10.length !== 10) {
+      return res.status(400).json({
+        error: 'phrase10 debe ser un array de 10 palabras',
+        error_code: 'BAD_REQUEST'
+      });
+    }
+    
+    // Normalizar y calcular hash
+    let phraseHash;
+    try {
+      phraseHash = hashPhrase(phrase10);
+    } catch (e) {
+      return res.status(400).json({
+        error: 'Error normalizando frase: ' + e.message,
+        error_code: 'BAD_REQUEST'
+      });
+    }
+    
+    // Buscar usuario por hash
+    db.get(
+      'SELECT address, public_key, encrypted_private_key FROM users WHERE phrase10_hash = ?',
+      [phraseHash],
+      (err, row) => {
+        if (err) {
+          console.error('Error consultando usuario:', err);
+          return res.status(500).json({
+            error: 'Error interno',
+            error_code: 'DB_ERROR'
+          });
+        }
+        
+        if (!row) {
+          return res.status(401).json({
+            error: 'Frase inválida o usuario no encontrado',
+            error_code: 'INVALID_PHRASE'
+          });
+        }
+        
+        // Descifrar clave privada
+        let privateKey;
+        try {
+          privateKey = decryptPrivateKey(row.encrypted_private_key);
+        } catch (e) {
+          console.error('Error descifrando clave privada:', e);
+          return res.status(500).json({
+            error: 'Error descifrando clave privada',
+            error_code: 'DECRYPT_ERROR'
+          });
+        }
+        
+        // Respuesta con clave privada (solo para debug)
+        res.status(200).json({
+          address: row.address,
+          public_key: row.public_key,
+          private_key: privateKey
+        });
+      }
+    );
+  } catch (error) {
+    console.error('Error en POST /wallet/identity-debug:', error);
+    res.status(500).json({
+      error: 'Error interno del servidor',
+      error_code: 'INTERNAL_ERROR'
+    });
+  }
+});
 
 // POST /v1/vouchers
 app.post('/v1/vouchers', async (req, res) => {
