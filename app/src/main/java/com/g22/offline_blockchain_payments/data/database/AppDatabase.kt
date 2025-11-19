@@ -6,13 +6,14 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 
 @Database(
-    entities = [VoucherEntity::class, OutboxEntity::class],
-    version = 2, // Incrementado por nuevos campos en VoucherEntity (settle)
+    entities = [VoucherEntity::class, OutboxEntity::class, PendingVoucherEntity::class],
+    version = 3, // Incrementado por PendingVoucherEntity
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun voucherDao(): VoucherDao
     abstract fun outboxDao(): OutboxDao
+    abstract fun pendingVoucherDao(): PendingVoucherDao
     
     companion object {
         @Volatile

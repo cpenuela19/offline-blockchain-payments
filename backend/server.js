@@ -924,6 +924,54 @@ app.get('/v1/balance/:alias', async (req, res) => {
   }
 });
 
+// GET /v1/wallet/balance?address=0xXXXX
+app.get('/v1/wallet/balance', async (req, res) => {
+  try {
+    const address = req.query.address;
+
+    // Validar que se proporcionó el address
+    if (!address) {
+      return res.status(400).json({
+        error: 'Parámetro "address" requerido',
+        error_code: 'ADDRESS_REQUIRED'
+      });
+    }
+
+    // Validar formato del address
+    if (!isHexAddress(address)) {
+      return res.status(400).json({
+        error: 'Dirección inválida. Debe ser una dirección hexadecimal válida (0x...)',
+        error_code: 'INVALID_ADDRESS'
+      });
+    }
+
+    try {
+      // Llamar al contrato AgroPuntos: balanceOf(address)
+      const balance = await tokenContract.balanceOf(address);
+      const decimals = await getDecimals();
+      const balanceFormatted = ethers.formatUnits(balance, decimals);
+
+      // Devolver balance en decimales
+      res.status(200).json({
+        balance_ap: Math.floor(parseFloat(balanceFormatted))
+      });
+    } catch (rpcError) {
+      // Manejar errores RPC (conexión, contrato, etc.)
+      console.error('Error RPC consultando balance:', rpcError);
+      res.status(500).json({
+        error: `Error consultando balance en la blockchain: ${rpcError.message}`,
+        error_code: 'RPC_ERROR'
+      });
+    }
+  } catch (error) {
+    console.error('Error en GET /v1/wallet/balance:', error);
+    res.status(500).json({
+      error: 'Error interno del servidor',
+      error_code: 'INTERNAL_ERROR'
+    });
+  }
+});
+
 async function processOutboxOnce() {
   db.all(`
           SELECT o.offer_id

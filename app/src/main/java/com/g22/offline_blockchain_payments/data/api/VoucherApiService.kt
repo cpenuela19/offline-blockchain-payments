@@ -19,6 +19,11 @@ interface VoucherApiService {
         @Path("alias") alias: String
     ): Response<BalanceResponse>
     
+    @GET("/v1/wallet/balance")
+    suspend fun getWalletBalance(
+        @Query("address") address: String
+    ): Response<WalletBalanceResponse>
+    
     @POST("/v1/vouchers/settle")
     suspend fun settleVoucher(
         @Body request: SettleRequest
@@ -49,6 +54,10 @@ interface VoucherApiService {
 
 data class BalanceResponse(
     val alias: String,
+    val balance_ap: Long
+)
+
+data class WalletBalanceResponse(
     val balance_ap: Long
 )
 
