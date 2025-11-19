@@ -56,7 +56,14 @@ class MainActivity : ComponentActivity() {
                 paymentBleViewModel = remember { PaymentBleViewModel(bleRepository) }
                 
                 // ViewModel para el saldo de AgroPuntos
-                val walletViewModel: WalletViewModel = viewModel()
+                val walletViewModel: WalletViewModel = viewModel(
+                    factory = object : ViewModelProvider.Factory {
+                        @Suppress("UNCHECKED_CAST")
+                        override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
+                            return WalletViewModel(application) as T
+                        }
+                    }
+                )
                 val availablePoints by walletViewModel.availablePoints.collectAsState()
                 val pendingPoints by walletViewModel.pendingPoints.collectAsState()
                 
