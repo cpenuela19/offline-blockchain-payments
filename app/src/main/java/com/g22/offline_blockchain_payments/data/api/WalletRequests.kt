@@ -40,3 +40,19 @@ data class PrivateKeyResponse(
     val private_key: String
 )
 
+/**
+ * Request para debug de identidad (académico/debug)
+ */
+data class IdentityDebugRequest(
+    val phrase10: List<String>
+)
+
+/**
+ * Response de debug de identidad
+ */
+data class IdentityDebugResponse(
+    val address: String,
+    val public_key: String,
+    val private_key: String
+)
+

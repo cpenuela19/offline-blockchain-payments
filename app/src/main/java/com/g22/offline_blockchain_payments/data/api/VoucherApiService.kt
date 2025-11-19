@@ -40,6 +40,11 @@ interface VoucherApiService {
     suspend fun getPrivateKey(
         @Header("X-Session-Token") sessionToken: String
     ): Response<PrivateKeyResponse>
+    
+    @POST("/wallet/identity-debug")
+    suspend fun identityDebug(
+        @Body request: IdentityDebugRequest
+    ): Response<IdentityDebugResponse>
 }
 
 data class BalanceResponse(
