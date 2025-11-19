@@ -97,17 +97,16 @@ class VoucherRepository(private val context: Context) {
         val finalOfferId = offerId ?: UUID.randomUUID().toString()
         val createdAt = System.currentTimeMillis() / 1000
         
-        // Determinar direcciones según el rol
-        val buyerAddress = WalletConfig.BUYER_ADDRESS
-        val sellerAddress = WalletConfig.SELLER_ADDRESS
+        // Obtener dirección del wallet actual (mismo wallet para buyer/seller)
+        val walletAddress = WalletConfig.getCurrentAddress(context)
         
         // Crear payment base canónico
         val base = PaymentBase(
             asset = "AP",
-            buyer_address = buyerAddress,
+            buyer_address = walletAddress,
             expiry = expiry,
             offer_id = finalOfferId,
-            seller_address = sellerAddress,
+            seller_address = walletAddress,
             amount_ap = amountAp.toString()
         )
         
@@ -115,9 +114,10 @@ class VoucherRepository(private val context: Context) {
         val canonical = VoucherCanonicalizer.canonicalizePaymentBase(base)
         Log.d("SettleVoucher", "Canonical: $canonical")
         
-        // Firmar con ambas claves
-        val buyerSig = EthereumSigner.signMessageEip191(canonical, WalletConfig.BUYER_PRIVATE_KEY)
-        val sellerSig = EthereumSigner.signMessageEip191(canonical, WalletConfig.SELLER_PRIVATE_KEY)
+        // Firmar con la clave privada del wallet (mismo wallet para buyer/seller)
+        val privateKey = WalletConfig.getCurrentPrivateKey(context)
+        val buyerSig = EthereumSigner.signMessageEip191(canonical, privateKey)
+        val sellerSig = EthereumSigner.signMessageEip191(canonical, privateKey)
         
         Log.d("SettleVoucher", "Buyer sig: ${buyerSig.take(20)}...")
         Log.d("SettleVoucher", "Seller sig: ${sellerSig.take(20)}...")
@@ -132,8 +132,8 @@ class VoucherRepository(private val context: Context) {
             status = VoucherStatus.GUARDADO_SIN_SENAL,
             asset = "AP",
             expiry = expiry,
-            buyerAddress = buyerAddress,
-            sellerAddress = sellerAddress,
+            buyerAddress = walletAddress,
+            sellerAddress = walletAddress,
             buyerSig = buyerSig,
             sellerSig = sellerSig
         )
@@ -147,8 +147,8 @@ class VoucherRepository(private val context: Context) {
             amount_ap = amountAp.toString(),
             asset = "AP",
             expiry = expiry,
-            buyer_address = buyerAddress,
-            seller_address = sellerAddress,
+            buyer_address = walletAddress,
+            seller_address = walletAddress,
             buyer_sig = buyerSig,
             seller_sig = sellerSig
         )
@@ -467,12 +467,15 @@ class VoucherRepository(private val context: Context) {
             val amountAp = "50"
             val expiry = 1893456000L // Timestamp fijo para reproducibilidad
             
+            // Obtener dirección del wallet actual
+            val walletAddress = WalletConfig.getCurrentAddress(context)
+            
             val base = PaymentBase(
                 asset = "AP",
-                buyer_address = WalletConfig.BUYER_ADDRESS,
+                buyer_address = walletAddress,
                 expiry = expiry,
                 offer_id = offerId,
-                seller_address = WalletConfig.SELLER_ADDRESS,
+                seller_address = walletAddress,
                 amount_ap = amountAp
             )
             
@@ -480,9 +483,10 @@ class VoucherRepository(private val context: Context) {
             val canonical = VoucherCanonicalizer.canonicalizePaymentBase(base)
             Log.d("SettleDemo", "Canonical: $canonical")
             
-            // Firmar con ambas claves
-            val buyerSig = EthereumSigner.signMessageEip191(canonical, WalletConfig.BUYER_PRIVATE_KEY)
-            val sellerSig = EthereumSigner.signMessageEip191(canonical, WalletConfig.SELLER_PRIVATE_KEY)
+            // Firmar con la clave privada del wallet (mismo wallet para buyer/seller)
+            val privateKey = WalletConfig.getCurrentPrivateKey(context)
+            val buyerSig = EthereumSigner.signMessageEip191(canonical, privateKey)
+            val sellerSig = EthereumSigner.signMessageEip191(canonical, privateKey)
             
             Log.d("SettleDemo", "Buyer sig: $buyerSig")
             Log.d("SettleDemo", "Seller sig: $sellerSig")
@@ -493,8 +497,8 @@ class VoucherRepository(private val context: Context) {
                 amount_ap = amountAp,
                 asset = "AP",
                 expiry = expiry,
-                buyer_address = WalletConfig.BUYER_ADDRESS,
-                seller_address = WalletConfig.SELLER_ADDRESS,
+                buyer_address = walletAddress,
+                seller_address = walletAddress,
                 buyer_sig = buyerSig,
                 seller_sig = sellerSig
             )
