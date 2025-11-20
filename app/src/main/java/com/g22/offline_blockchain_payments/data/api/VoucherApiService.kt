@@ -29,23 +29,58 @@ interface VoucherApiService {
         @Body request: SettleRequest
     ): Response<SettleResponse>
     
-    // ─────────────────────────── Wallet Endpoints ───────────────────────────
+    // ═══════════════════════════════════════════════════════════════
+    // NUEVOS WALLET ENDPOINTS - TRUE SELF-CUSTODY MODEL
+    // ═══════════════════════════════════════════════════════════════
     
+    /**
+     * Registra un nuevo wallet (solo datos públicos)
+     * Backend NUNCA recibe palabras ni clave privada
+     */
+    @POST("/wallet/register")
+    suspend fun registerWallet(
+        @Body request: RegisterWalletRequest
+    ): Response<RegisterWalletResponse>
+    
+    /**
+     * Obtiene información de un wallet existente (para restauración)
+     */
+    @GET("/wallet/info")
+    suspend fun getWalletInfo(
+        @Query("address") address: String
+    ): Response<WalletInfoResponse>
+    
+    /**
+     * Login con dirección (para restauración)
+     */
+    @POST("/wallet/login")
+    suspend fun loginWallet(
+        @Body request: LoginWalletRequest
+    ): Response<LoginWalletResponse>
+    
+    // ═══════════════════════════════════════════════════════════════
+    // ENDPOINTS ANTIGUOS - DEPRECATED (A ELIMINAR)
+    // ═══════════════════════════════════════════════════════════════
+    
+    @Deprecated("Backend no debe generar wallets")
     @POST("/wallet/create")
     suspend fun createWallet(
         @Body request: CreateWalletRequest
     ): Response<CreateWalletResponse>
     
+    @Deprecated("Backend no debe recibir frases")
     @POST("/auth/login-via-phrase")
     suspend fun loginViaPhrase(
         @Body request: LoginViaPhraseRequest
     ): Response<LoginViaPhraseResponse>
     
+    @Deprecated("Backend NUNCA debe enviar claves privadas")
     @GET("/wallet/private-key")
     suspend fun getPrivateKey(
         @Header("X-Session-Token") sessionToken: String
     ): Response<PrivateKeyResponse>
     
+    @Deprecated("Endpoint peligroso - ELIMINAR")
     @POST("/wallet/identity-debug")
     suspend fun identityDebug(
         @Body request: IdentityDebugRequest

@@ -18,13 +18,27 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json());
 app.use(cors());
 
-// Rate limiting
+// Rate limiting general
 const limiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 60000,
   max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 30,
   message: 'Demasiadas solicitudes, intenta más tarde'
 });
 app.use('/v1/', limiter);
+
+// Rate limiting ESTRICTO para settle (endpoint crítico de seguridad)
+const settleLimiter = rateLimit({
+  windowMs: 60000, // 1 minuto
+  max: 10, // Máximo 10 settle requests por minuto
+  message: 'Demasiados intentos de settle, intenta más tarde',
+  handler: (req, res) => {
+    console.warn(`🚨 [RATE_LIMIT] IP bloqueada temporalmente en settle: ${req.ip}`);
+    res.status(429).json({
+      error_code: 'RATE_LIMIT_EXCEEDED',
+      message: 'Demasiados intentos de settle. Espera 1 minuto.'
+    });
+  }
+});
 
 // ─────────────────────── Configuración blockchain ─────────────────────
 const CHAIN_ID = parseInt(process.env.CHAIN_ID || '11155111');
@@ -204,14 +218,16 @@ function initDatabase() {
     }
   });
 
-  // Crear tabla users para el nuevo sistema de autenticación
+  // Crear tabla users para TRUE SELF-CUSTODY model
+  // Backend SOLO almacena datos públicos (address, public_key)
+  // Backend NUNCA almacena: phrase10_hash, encrypted_private_key
   db.run(`
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      phrase10_hash TEXT NOT NULL UNIQUE,
-      encrypted_private_key TEXT NOT NULL,
-      public_key TEXT NOT NULL,
       address TEXT NOT NULL UNIQUE,
+      public_key TEXT NOT NULL,
+      session_token TEXT,
+      session_expires_at INTEGER,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     )
@@ -219,9 +235,20 @@ function initDatabase() {
     if (err) {
       console.error('Error creando tabla users:', err);
     } else {
-      console.log('Tabla users creada/verificada');
-      // Agregar columna session_token si no existe (migración)
-      db.run(`ALTER TABLE users ADD COLUMN session_token TEXT`, () => {});
+      console.log('✅ Tabla users creada/verificada (TRUE SELF-CUSTODY model)');
+      
+      // Crear índices para mejor rendimiento
+      db.run('CREATE INDEX IF NOT EXISTS idx_address ON users(address)', (err) => {
+        if (err && !err.message.includes('already exists')) {
+          console.error('Error creando índice idx_address:', err);
+        }
+      });
+      
+      db.run('CREATE INDEX IF NOT EXISTS idx_session_token ON users(session_token)', (err) => {
+        if (err && !err.message.includes('already exists')) {
+          console.error('Error creando índice idx_session_token:', err);
+        }
+      });
     }
   });
 }
@@ -350,72 +377,224 @@ function validateVoucherRequest(req) {
 
 // ───────────────────────────── Endpoints ──────────────────────────────
 
-// POST /wallet/create
-app.post('/wallet/create', async (req, res) => {
-  try {
-    const { device_info } = req.body || {};
+// ═════════════════════════════════════════════════════════════════════════════
+// NUEVO ENDPOINT - TRUE SELF-CUSTODY MODEL
+// ═════════════════════════════════════════════════════════════════════════════
 
-    // Generar frase de 10 palabras
-    const phrase10 = generatePhrase10();
+// POST /wallet/register - Registra un nuevo wallet (SOLO datos públicos)
+// Backend NUNCA recibe palabras ni clave privada
+app.post('/wallet/register', async (req, res) => {
+  try {
+    const { address, public_key } = req.body || {};
     
-    // Normalizar y calcular hash
-    const phraseHash = hashPhrase(phrase10);
+    // Validaciones
+    if (!address || !public_key) {
+      return res.status(400).json({
+        error: 'address y public_key son requeridos',
+        error_code: 'BAD_REQUEST'
+      });
+    }
     
-    // Generar clave privada ECDSA secp256k1
-    const userWallet = ethers.Wallet.createRandom();
-    const privateKey = userWallet.privateKey;
-    const publicKey = userWallet.publicKey;
-    const address = userWallet.address;
+    // Validar formato de dirección (0x seguido de 40 caracteres hex)
+    if (!address.match(/^0x[0-9a-fA-F]{40}$/)) {
+      return res.status(400).json({
+        error: 'Formato de address inválido',
+        error_code: 'INVALID_ADDRESS'
+      });
+    }
     
-    // Cifrar clave privada
-    const encryptedPrivateKey = encryptPrivateKey(privateKey);
+    // Normalizar address a lowercase
+    const addressLower = address.toLowerCase();
     
-    // Guardar usuario en BD
-    const now = Math.floor(Date.now() / 1000);
-    db.run(
-      `INSERT INTO users (phrase10_hash, encrypted_private_key, public_key, address, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [phraseHash, encryptedPrivateKey, publicKey, address.toLowerCase(), now, now],
-      (err) => {
+    // Verificar que no exista ya
+    db.get('SELECT * FROM users WHERE address = ?', [addressLower], (err, row) => {
+      if (err) {
+        console.error('Error consultando usuario:', err);
+        return res.status(500).json({
+          error: 'Error interno',
+          error_code: 'DB_ERROR'
+        });
+      }
+      
+      if (row) {
+        return res.status(409).json({
+          error: 'Wallet ya existe',
+          error_code: 'WALLET_EXISTS'
+        });
+      }
+      
+      // Generar session token
+      const sessionToken = generateSessionToken();
+      const now = Math.floor(Date.now() / 1000);
+      const expiresAt = now + (7 * 24 * 60 * 60); // 7 días
+      
+      // Guardar usuario (SOLO datos públicos)
+      db.run(`
+        INSERT INTO users (address, public_key, session_token, session_expires_at, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `, [addressLower, public_key, sessionToken, expiresAt, now, now], async function(err) {
         if (err) {
           console.error('Error guardando usuario:', err);
-          if (err.message.includes('UNIQUE constraint failed')) {
-            return res.status(409).json({
-              error: 'Usuario ya existe',
-              error_code: 'USER_EXISTS'
+          return res.status(500).json({
+            error: 'Error interno',
+            error_code: 'DB_ERROR'
+          });
+        }
+        
+        console.log(`✅ Nuevo wallet registrado: ${addressLower}`);
+        
+        // 🎁 FAUCET AUTOMÁTICO: Enviar 1000 AP al nuevo usuario
+        // Esto se hace de forma asíncrona (no bloquea la respuesta)
+        (async () => {
+          try {
+            const FAUCET_AMOUNT = '1000'; // Cantidad de AP a enviar
+            const decimals = await getDecimals();
+            const amountWei = ethers.parseUnits(FAUCET_AMOUNT, decimals);
+            
+            console.log(`💰 [FAUCET] Enviando ${FAUCET_AMOUNT} AP a ${addressLower}...`);
+            
+            const tx = await tokenContract.transfer(addressLower, amountWei);
+            console.log(`💰 [FAUCET] Transacción enviada: ${tx.hash}`);
+            
+            // Esperar confirmación en background (no bloquear)
+            tx.wait(1).then((receipt) => {
+              if (receipt.status === 1) {
+                console.log(`✅ [FAUCET] ${FAUCET_AMOUNT} AP enviados exitosamente a ${addressLower}`);
+              } else {
+                console.error(`❌ [FAUCET] Transacción falló para ${addressLower}`);
+              }
+            }).catch((waitErr) => {
+              console.error(`❌ [FAUCET] Error esperando confirmación para ${addressLower}:`, waitErr.message);
+            });
+          } catch (faucetError) {
+            // Si falla el faucet, solo logear el error (no afecta el registro)
+            console.error(`❌ [FAUCET] Error enviando tokens a ${addressLower}:`, faucetError.message);
+          }
+        })();
+        
+        // Responder inmediatamente (no esperar el faucet)
+        res.status(201).json({
+          success: true,
+          session_token: sessionToken,
+          address: addressLower
+        });
+      });
+    });
+  } catch (error) {
+    console.error('Error en POST /wallet/register:', error);
+    res.status(500).json({
+      error: 'Error interno del servidor',
+      error_code: 'INTERNAL_ERROR'
+    });
+  }
+});
+
+// GET /wallet/info?address=0x... - Obtiene información de un wallet (para restauración)
+app.get('/wallet/info', async (req, res) => {
+  try {
+    const { address } = req.query;
+    
+    if (!address) {
+      return res.status(400).json({
+        error: 'address es requerido',
+        error_code: 'BAD_REQUEST'
+      });
+    }
+    
+    const addressLower = address.toLowerCase();
+    
+    db.get('SELECT address, public_key, created_at FROM users WHERE address = ?', 
+      [addressLower], (err, row) => {
+        if (err) {
+          console.error('Error consultando usuario:', err);
+          return res.status(500).json({
+            error: 'Error interno',
+            error_code: 'DB_ERROR'
+          });
+        }
+        
+        if (!row) {
+          return res.status(404).json({
+            error: 'Wallet no encontrado',
+            error_code: 'NOT_FOUND'
+          });
+        }
+        
+        res.status(200).json({
+          address: row.address,
+          public_key: row.public_key,
+          created_at: row.created_at
+        });
+      }
+    );
+  } catch (error) {
+    console.error('Error en GET /wallet/info:', error);
+    res.status(500).json({
+      error: 'Error interno del servidor',
+      error_code: 'INTERNAL_ERROR'
+    });
+  }
+});
+
+// POST /wallet/login - Login con dirección (para restauración)
+app.post('/wallet/login', async (req, res) => {
+  try {
+    const { address } = req.body || {};
+    
+    if (!address) {
+      return res.status(400).json({
+        error: 'address es requerido',
+        error_code: 'BAD_REQUEST'
+      });
+    }
+    
+    const addressLower = address.toLowerCase();
+    
+    db.get('SELECT * FROM users WHERE address = ?', [addressLower], (err, row) => {
+      if (err) {
+        console.error('Error consultando usuario:', err);
+        return res.status(500).json({
+          error: 'Error interno',
+          error_code: 'DB_ERROR'
+        });
+      }
+      
+      if (!row) {
+        return res.status(404).json({
+          error: 'Wallet no encontrado',
+          error_code: 'NOT_FOUND'
+        });
+      }
+      
+      // Generar nuevo session token
+      const sessionToken = generateSessionToken();
+      const now = Math.floor(Date.now() / 1000);
+      const expiresAt = now + (7 * 24 * 60 * 60); // 7 días
+      
+      // Actualizar token
+      db.run(
+        'UPDATE users SET session_token = ?, session_expires_at = ?, updated_at = ? WHERE address = ?',
+        [sessionToken, expiresAt, now, addressLower],
+        (err) => {
+          if (err) {
+            console.error('Error actualizando session:', err);
+            return res.status(500).json({
+              error: 'Error interno',
+              error_code: 'DB_ERROR'
             });
           }
-          return res.status(500).json({
-            error: 'Error interno',
-            error_code: 'DB_ERROR'
+          
+          console.log(`✅ Login exitoso: ${addressLower}`);
+          
+          res.status(200).json({
+            session_token: sessionToken,
+            address: addressLower
           });
         }
-        
-        // Generar token de sesión
-        const sessionToken = generateSessionToken();
-        
-        // Guardar session_token en la base de datos
-        db.run(
-          'UPDATE users SET session_token = ? WHERE phrase10_hash = ?',
-          [sessionToken, phraseHash],
-          (updateErr) => {
-            if (updateErr) {
-              console.error('Error guardando session_token:', updateErr);
-            }
-          }
-        );
-        
-        // Respuesta (NO incluir clave privada)
-        res.status(200).json({
-          phrase10: phrase10,
-          address: address,
-          public_key: publicKey,
-          session_token: sessionToken
-        });
-      }
-    );
+      );
+    });
   } catch (error) {
-    console.error('Error en POST /wallet/create:', error);
+    console.error('Error en POST /wallet/login:', error);
     res.status(500).json({
       error: 'Error interno del servidor',
       error_code: 'INTERNAL_ERROR'
@@ -423,209 +602,48 @@ app.post('/wallet/create', async (req, res) => {
   }
 });
 
-// POST /auth/login-via-phrase
+// ═════════════════════════════════════════════════════════════════════════════
+// ENDPOINTS ANTIGUOS - DEPRECATED (ELIMINAR DESPUÉS DE MIGRACIÓN)
+// ═════════════════════════════════════════════════════════════════════════════
+
+// DEPRECATED: POST /wallet/create
+// Backend YA NO debe generar wallets - La app genera todo localmente
+app.post('/wallet/create', async (req, res) => {
+  console.warn('⚠️ DEPRECATED: /wallet/create - Backend no debe generar wallets');
+  res.status(410).json({
+    error: 'Endpoint deprecado - Usar /wallet/register',
+    error_code: 'DEPRECATED_ENDPOINT'
+  });
+});
+
+// DEPRECATED: POST /auth/login-via-phrase
+// Backend YA NO debe recibir frases - La app deriva todo localmente
 app.post('/auth/login-via-phrase', async (req, res) => {
-  try {
-    const { phrase10 } = req.body || {};
-    
-    if (!Array.isArray(phrase10) || phrase10.length !== 10) {
-      return res.status(400).json({
-        error: 'phrase10 debe ser un array de 10 palabras',
-        error_code: 'BAD_REQUEST'
-      });
-    }
-    
-    // Normalizar y calcular hash
-    let phraseHash;
-    try {
-      phraseHash = hashPhrase(phrase10);
-    } catch (e) {
-      return res.status(400).json({
-        error: 'Error normalizando frase: ' + e.message,
-        error_code: 'BAD_REQUEST'
-      });
-    }
-    
-    // Buscar usuario por hash
-    db.get(
-      'SELECT address, public_key FROM users WHERE phrase10_hash = ?',
-      [phraseHash],
-      (err, row) => {
-        if (err) {
-          console.error('Error consultando usuario:', err);
-          return res.status(500).json({
-            error: 'Error interno',
-            error_code: 'DB_ERROR'
-          });
-        }
-        
-        if (!row) {
-          return res.status(401).json({
-            error: 'Frase inválida o usuario no encontrado',
-            error_code: 'INVALID_PHRASE'
-          });
-        }
-        
-        // Generar token de sesión
-        const sessionToken = generateSessionToken();
-        
-        // Guardar session_token en la base de datos
-        db.run(
-          'UPDATE users SET session_token = ? WHERE phrase10_hash = ?',
-          [sessionToken, phraseHash],
-          (updateErr) => {
-            if (updateErr) {
-              console.error('Error guardando session_token:', updateErr);
-            }
-          }
-        );
-        
-        // Respuesta (NO incluir clave privada)
-        res.status(200).json({
-          address: row.address,
-          public_key: row.public_key,
-          session_token: sessionToken
-        });
-      }
-    );
-  } catch (error) {
-    console.error('Error en POST /auth/login-via-phrase:', error);
-    res.status(500).json({
-      error: 'Error interno del servidor',
-      error_code: 'INTERNAL_ERROR'
-    });
-  }
+  console.warn('⚠️ DEPRECATED: /auth/login-via-phrase - Backend no debe recibir frases');
+  res.status(410).json({
+    error: 'Endpoint deprecado - Usar /wallet/login con address',
+    error_code: 'DEPRECATED_ENDPOINT'
+  });
 });
 
-// GET /wallet/private-key
+// DEPRECATED: GET /wallet/private-key
+// ⚠️ PELIGROSO: Backend NUNCA debe enviar claves privadas
 app.get('/wallet/private-key', async (req, res) => {
-  try {
-    const sessionToken = req.headers['x-session-token'] || req.query.session_token;
-    
-    if (!sessionToken) {
-      return res.status(401).json({
-        error: 'session_token requerido',
-        error_code: 'MISSING_SESSION_TOKEN'
-      });
-    }
-    
-    // Buscar usuario por session_token
-    db.get(
-      'SELECT encrypted_private_key, address FROM users WHERE session_token = ?',
-      [sessionToken],
-      (err, row) => {
-        if (err) {
-          console.error('Error consultando usuario:', err);
-          return res.status(500).json({
-            error: 'Error interno',
-            error_code: 'DB_ERROR'
-          });
-        }
-        
-        if (!row) {
-          return res.status(401).json({
-            error: 'Token de sesión inválido o expirado',
-            error_code: 'INVALID_SESSION_TOKEN'
-          });
-        }
-        
-        // Descifrar clave privada
-        let privateKey;
-        try {
-          privateKey = decryptPrivateKey(row.encrypted_private_key);
-        } catch (e) {
-          console.error('Error descifrando clave privada:', e);
-          return res.status(500).json({
-            error: 'Error descifrando clave privada',
-            error_code: 'DECRYPT_ERROR'
-          });
-        }
-        
-        // Respuesta con clave privada
-        res.status(200).json({
-          private_key: privateKey
-        });
-      }
-    );
-  } catch (error) {
-    console.error('Error en GET /wallet/private-key:', error);
-    res.status(500).json({
-      error: 'Error interno del servidor',
-      error_code: 'INTERNAL_ERROR'
-    });
-  }
+  console.error('❌ DEPRECATED & DANGEROUS: /wallet/private-key - Backend NO debe enviar claves privadas');
+  res.status(410).json({
+    error: 'Endpoint deprecado y peligroso - ELIMINADO por seguridad',
+    error_code: 'DEPRECATED_ENDPOINT'
+  });
 });
 
-// POST /wallet/identity-debug
+// DEPRECATED: POST /wallet/identity-debug
+// ⚠️ MUY PELIGROSO: Endpoint que expone claves privadas
 app.post('/wallet/identity-debug', async (req, res) => {
-  try {
-    const { phrase10 } = req.body || {};
-    
-    if (!Array.isArray(phrase10) || phrase10.length !== 10) {
-      return res.status(400).json({
-        error: 'phrase10 debe ser un array de 10 palabras',
-        error_code: 'BAD_REQUEST'
-      });
-    }
-    
-    // Normalizar y calcular hash
-    let phraseHash;
-    try {
-      phraseHash = hashPhrase(phrase10);
-    } catch (e) {
-      return res.status(400).json({
-        error: 'Error normalizando frase: ' + e.message,
-        error_code: 'BAD_REQUEST'
-      });
-    }
-    
-    // Buscar usuario por hash
-    db.get(
-      'SELECT address, public_key, encrypted_private_key FROM users WHERE phrase10_hash = ?',
-      [phraseHash],
-      (err, row) => {
-        if (err) {
-          console.error('Error consultando usuario:', err);
-          return res.status(500).json({
-            error: 'Error interno',
-            error_code: 'DB_ERROR'
-          });
-        }
-        
-        if (!row) {
-          return res.status(401).json({
-            error: 'Frase inválida o usuario no encontrado',
-            error_code: 'INVALID_PHRASE'
-          });
-        }
-        
-        // Descifrar clave privada
-        let privateKey;
-        try {
-          privateKey = decryptPrivateKey(row.encrypted_private_key);
-        } catch (e) {
-          console.error('Error descifrando clave privada:', e);
-          return res.status(500).json({
-            error: 'Error descifrando clave privada',
-            error_code: 'DECRYPT_ERROR'
-          });
-        }
-        
-        // Respuesta con clave privada (solo para debug)
-        res.status(200).json({
-          address: row.address,
-          public_key: row.public_key,
-          private_key: privateKey
-        });
-      }
-    );
-  } catch (error) {
-    console.error('Error en POST /wallet/identity-debug:', error);
-    res.status(500).json({
-      error: 'Error interno del servidor',
-      error_code: 'INTERNAL_ERROR'
-    });
-  }
+  console.error('❌ DEPRECATED & VERY DANGEROUS: /wallet/identity-debug - Endpoint eliminado por seguridad');
+  res.status(410).json({
+    error: 'Endpoint deprecado y MUY PELIGROSO - ELIMINADO permanentemente',
+    error_code: 'DEPRECATED_ENDPOINT'
+  });
 });
 
 // POST /v1/vouchers
@@ -732,8 +750,8 @@ app.post('/v1/vouchers', async (req, res) => {
   }
 });
 
-// POST /v1/vouchers/settle
-app.post('/v1/vouchers/settle', async (req, res) => {
+// POST /v1/vouchers/settle (con rate limiting estricto)
+app.post('/v1/vouchers/settle', settleLimiter, async (req, res) => {
   try {
     const {
       offer_id, amount_ap, asset, expiry,
@@ -741,32 +759,94 @@ app.post('/v1/vouchers/settle', async (req, res) => {
       buyer_address, buyer_sig
     } = req.body || {};
 
+    // ═══════════════════════════════════════════════════════════════════
+    // VALIDACIONES BÁSICAS
+    // ═══════════════════════════════════════════════════════════════════
+    
     if (!offer_id || !amount_ap || !asset || !expiry || !seller_address || !seller_sig || !buyer_address || !buyer_sig) {
+      console.warn(`🔒 [SETTLE] Campos faltantes en request`);
       return res.status(400).json({ error_code: 'BAD_REQUEST', message: 'Missing fields' });
     }
+    
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(offer_id))) {
+      console.warn(`🔒 [SETTLE] offer_id inválido: ${offer_id}`);
       return res.status(400).json({ error_code: 'BAD_OFFER_ID', message: 'offer_id must be UUID v4' });
     }
+    
     if (String(asset) !== 'AP') {
+      console.warn(`🔒 [SETTLE] asset inválido: ${asset}`);
       return res.status(400).json({ error_code: 'BAD_ASSET', message: 'asset must be "AP"' });
     }
+    
     const now = Math.floor(Date.now() / 1000);
     if (Number(expiry) <= now) {
+      console.warn(`🔒 [SETTLE] Voucher expirado: ${offer_id}, expiry: ${expiry}, now: ${now}`);
       return res.status(409).json({ error_code: 'EXPIRED', message: 'Voucher expired' });
     }
 
     if (!isHexAddress(seller_address) || !isHexAddress(buyer_address)) {
+      console.warn(`🔒 [SETTLE] Dirección inválida - seller: ${seller_address}, buyer: ${buyer_address}`);
       return res.status(400).json({ error_code: 'BAD_ADDRESS', message: 'seller_address y buyer_address deben ser 0x...' });
     }
 
     const amountNumeric = Number(amount_ap);
     if (!Number.isFinite(amountNumeric) || amountNumeric <= 0) {
+      console.warn(`🔒 [SETTLE] Monto inválido: ${amount_ap}`);
       return res.status(400).json({ error_code: 'BAD_AMOUNT', message: 'amount_ap inválido' });
     }
 
     const sellerLower = seller_address.toLowerCase();
     const buyerLower = buyer_address.toLowerCase();
 
+    // ═══════════════════════════════════════════════════════════════════
+    // SEGURIDAD CRÍTICA: Validar que buyer ≠ seller
+    // ═══════════════════════════════════════════════════════════════════
+    
+    if (buyerLower === sellerLower) {
+      console.error(`🚨 [SETTLE] ATAQUE DETECTADO: Auto-transferencia - ${buyerLower}`);
+      return res.status(400).json({ 
+        error_code: 'SAME_ADDRESS', 
+        message: 'buyer y seller no pueden ser la misma dirección' 
+      });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // SEGURIDAD CRÍTICA: Verificar que las addresses estén registradas
+    // ═══════════════════════════════════════════════════════════════════
+    
+    const [buyerExists, sellerExists] = await Promise.all([
+      new Promise((resolve) => {
+        db.get('SELECT address FROM users WHERE address = ?', [buyerLower], (err, row) => {
+          resolve(!err && !!row);
+        });
+      }),
+      new Promise((resolve) => {
+        db.get('SELECT address FROM users WHERE address = ?', [sellerLower], (err, row) => {
+          resolve(!err && !!row);
+        });
+      })
+    ]);
+
+    if (!buyerExists) {
+      console.error(`🚨 [SETTLE] ATAQUE DETECTADO: Buyer no registrado - ${buyerLower}`);
+      return res.status(403).json({ 
+        error_code: 'BUYER_NOT_REGISTERED', 
+        message: 'Buyer address no está registrado en el sistema' 
+      });
+    }
+
+    if (!sellerExists) {
+      console.error(`🚨 [SETTLE] ATAQUE DETECTADO: Seller no registrado - ${sellerLower}`);
+      return res.status(403).json({ 
+        error_code: 'SELLER_NOT_REGISTERED', 
+        message: 'Seller address no está registrado en el sistema' 
+      });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // CANONICALIZACIÓN Y VERIFICACIÓN DE FIRMAS
+    // ═══════════════════════════════════════════════════════════════════
+    
     const base = {
       offer_id,
       amount_ap: String(amount_ap),
@@ -775,18 +855,47 @@ app.post('/v1/vouchers/settle', async (req, res) => {
       seller_address: sellerLower,
       buyer_address: buyerLower
     };
+    
     let canonical;
     try {
       canonical = canonicalizePaymentBase(base);
     } catch (e) {
+      console.error(`🔒 [SETTLE] Error canonicalizando: ${e.message}`);
       return res.status(400).json({ error_code: 'BAD_CANONICAL', message: String(e.message) });
     }
 
+    console.log(`🔒 [SETTLE] Verificando firmas para ${offer_id}...`);
+    console.log(`   Buyer: ${buyerLower}`);
+    console.log(`   Seller: ${sellerLower}`);
+    console.log(`   Amount: ${amount_ap} AP`);
+
+    // Verificar firma del seller
     const okSeller = verifySignature(canonical, seller_sig, sellerLower);
-    const okBuyer = verifySignature(canonical, buyer_sig, buyerLower);
-    if (!okSeller || !okBuyer) {
-      return res.status(422).json({ error_code: 'INVALID_SIGNATURE', message: 'seller_sig or buyer_sig invalid' });
+    if (!okSeller) {
+      console.error(`🚨 [SETTLE] FIRMA INVÁLIDA: Seller signature falló - ${sellerLower}`);
+      console.error(`   offer_id: ${offer_id}`);
+      console.error(`   canonical: ${canonical}`);
+      console.error(`   seller_sig: ${seller_sig}`);
+      return res.status(422).json({ 
+        error_code: 'INVALID_SELLER_SIGNATURE', 
+        message: 'Firma del vendedor inválida' 
+      });
     }
+
+    // Verificar firma del buyer
+    const okBuyer = verifySignature(canonical, buyer_sig, buyerLower);
+    if (!okBuyer) {
+      console.error(`🚨 [SETTLE] FIRMA INVÁLIDA: Buyer signature falló - ${buyerLower}`);
+      console.error(`   offer_id: ${offer_id}`);
+      console.error(`   canonical: ${canonical}`);
+      console.error(`   buyer_sig: ${buyer_sig}`);
+      return res.status(422).json({ 
+        error_code: 'INVALID_BUYER_SIGNATURE', 
+        message: 'Firma del comprador inválida' 
+      });
+    }
+
+    console.log(`✅ [SETTLE] Firmas verificadas exitosamente para ${offer_id}`);
 
     // Verificar si el voucher ya existe
     db.get('SELECT offer_id, tx_hash, status FROM vouchers WHERE offer_id=?', [offer_id], (err, row) => {

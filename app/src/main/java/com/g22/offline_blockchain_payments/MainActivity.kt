@@ -28,6 +28,8 @@ import com.g22.offline_blockchain_payments.ui.viewmodel.WalletSetupViewModel
 import com.g22.offline_blockchain_payments.ui.viewmodel.WalletUnlockViewModel
 import com.g22.offline_blockchain_payments.data.wallet.WalletManager
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Alignment
@@ -39,6 +41,7 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
     private lateinit var bleRepository: BleRepository
     private lateinit var paymentBleViewModel: PaymentBleViewModel
+    private var walletViewModelRef: WalletViewModel? = null
     
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -49,6 +52,14 @@ class MainActivity : ComponentActivity() {
         
         // Inicializar SyncWorker
         SyncWorker.enqueue(this)
+        
+        // Observar lifecycle para refrescar balance cuando la app vuelve del background
+        lifecycle.addObserver(LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                // App vuelve del background - refrescar balance real
+                walletViewModelRef?.refreshRealBalance()
+            }
+        })
         
         setContent {
             OfflineblockchainpaymentsTheme {
@@ -64,6 +75,9 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 )
+                // Guardar referencia para lifecycle observer
+                walletViewModelRef = walletViewModel
+                
                 val availablePoints by walletViewModel.availablePoints.collectAsState()
                 val pendingPoints by walletViewModel.pendingPoints.collectAsState()
                 
@@ -212,7 +226,8 @@ class MainActivity : ComponentActivity() {
                                     navController.navigate("buyer/start")
                                 },
                                 availablePoints = availablePoints,
-                                pendingPoints = pendingPoints
+                                pendingPoints = pendingPoints,
+                                walletViewModel = walletViewModel
                             )
                         }
                         
