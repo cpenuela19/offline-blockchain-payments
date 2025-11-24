@@ -10,6 +10,8 @@ import com.g22.offline_blockchain_payments.ble.util.BleConstants
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
 
 class BleRepository(private val context: Context) {
@@ -35,6 +37,9 @@ class BleRepository(private val context: Context) {
     
     // Buffer para mensajes fragmentados BLE
     private val messageBuffer = StringBuilder()
+    
+    // Para esperar escrituras BLE asíncronas
+    private var writeCompletion: CompletableDeferred<Boolean>? = null
     
     // GATT Server callbacks (Host mode)
     private val gattServerCallback = object : BluetoothGattServerCallback() {
@@ -129,23 +134,31 @@ class BleRepository(private val context: Context) {
                 
                 // Verificar si el mensaje JSON está completo
                 val currentMessage = messageBuffer.toString()
+                Log.d(TAG, "🟢 SERVER: Buffer actual (${currentMessage.length} chars): ${currentMessage.take(100)}...")
+                
                 if (currentMessage.startsWith("{") && currentMessage.endsWith("}")) {
                     try {
                         // Validar que es un JSON válido
                         org.json.JSONObject(currentMessage)
                         
                         // Mensaje completo y válido
-                        Log.d(TAG, "🟢 SERVER: ✅ COMPLETE MESSAGE: $currentMessage")
+                        Log.d(TAG, "🟢 SERVER: ✅ JSON VÁLIDO Y COMPLETO")
+                        Log.d(TAG, "🟢 SERVER: Mensaje completo: $currentMessage")
+                        
                         _receivedMessage.value = currentMessage
+                        Log.d(TAG, "🟢 SERVER: ✅ _receivedMessage.value ACTUALIZADO")
+                        
                         _connectionState.value = ConnectionState.Success("Mensaje recibido completo")
                         
                         // Limpiar buffer para el siguiente mensaje
                         messageBuffer.clear()
+                        Log.d(TAG, "🟢 SERVER: Buffer limpiado para el próximo mensaje")
                     } catch (e: Exception) {
-                        Log.d(TAG, "🟢 SERVER: JSON incomplete or invalid, waiting for more fragments...")
+                        Log.e(TAG, "🟢 SERVER: ❌ JSON incompleto o inválido: ${e.message}")
+                        Log.d(TAG, "🟢 SERVER: Contenido del buffer: $currentMessage")
                     }
                 } else {
-                    Log.d(TAG, "🟢 SERVER: Waiting for more fragments... (current: ${currentMessage.take(50)}...)")
+                    Log.d(TAG, "🟢 SERVER: ⏳ Esperando más fragmentos... (inicio: ${currentMessage.take(10)}, fin: ${currentMessage.takeLast(10)})")
                     _connectionState.value = ConnectionState.Connected
                 }
             } else {
@@ -164,8 +177,15 @@ class BleRepository(private val context: Context) {
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> {
                     _connectionState.value = ConnectionState.Connected
-                    Log.d(TAG, "Connected to GATT server, discovering services...")
-                    gatt?.discoverServices()
+                    Log.d(TAG, "Connected to GATT server, requesting MTU...")
+                    // Solicitar MTU más grande (512 bytes) para enviar más datos por paquete
+                    val mtuRequested = gatt?.requestMtu(512) ?: false
+                    Log.d(TAG, "MTU request: $mtuRequested")
+                    if (!mtuRequested) {
+                        // Si falla, descubrir servicios directamente
+                        Log.d(TAG, "MTU request failed, discovering services...")
+                        gatt?.discoverServices()
+                    }
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     _connectionState.value = ConnectionState.Error("Desconectado del servidor")
@@ -174,11 +194,44 @@ class BleRepository(private val context: Context) {
             }
         }
         
+        @SuppressLint("MissingPermission")
+        override fun onMtuChanged(gatt: BluetoothGatt?, mtu: Int, status: Int) {
+            super.onMtuChanged(gatt, mtu, status)
+            Log.d(TAG, "MTU changed: $mtu bytes, status: $status")
+            // Después de cambiar MTU, descubrir servicios
+            Log.d(TAG, "Discovering services after MTU change...")
+            gatt?.discoverServices()
+        }
+        
         override fun onServicesDiscovered(gatt: BluetoothGatt?, status: Int) {
             super.onServicesDiscovered(gatt, status)
             Log.d(TAG, "Services discovered: $status")
             
             if (status == BluetoothGatt.GATT_SUCCESS) {
+                // CRÍTICO: Habilitar notificaciones para recibir mensajes del servidor
+                val service = gatt?.getService(BleConstants.SERVICE_UUID)
+                val characteristic = service?.getCharacteristic(BleConstants.ECHO_CHAR_UUID)
+                
+                if (characteristic != null) {
+                    Log.d(TAG, "🔔 CLIENT: Habilitando notificaciones para recibir mensajes del servidor...")
+                    
+                    // Paso 1: Habilitar notificaciones localmente
+                    val notificationEnabled = gatt.setCharacteristicNotification(characteristic, true)
+                    Log.d(TAG, "🔔 CLIENT: setCharacteristicNotification = $notificationEnabled")
+                    
+                    // Paso 2: Escribir el descriptor CCC para habilitar notificaciones en el servidor
+                    val descriptor = characteristic.getDescriptor(BleConstants.NOTIFICATION_DESCRIPTOR_UUID)
+                    if (descriptor != null) {
+                        descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                        val writeSuccess = gatt.writeDescriptor(descriptor)
+                        Log.d(TAG, "🔔 CLIENT: writeDescriptor (ENABLE_NOTIFICATION) = $writeSuccess")
+                    } else {
+                        Log.e(TAG, "🔔 CLIENT: ❌ Descriptor CCC no encontrado")
+                    }
+                } else {
+                    Log.e(TAG, "🔔 CLIENT: ❌ Característica ECHO no encontrada")
+                }
+                
                 _connectionState.value = ConnectionState.Success("Servicios descubiertos")
             } else {
                 _connectionState.value = ConnectionState.Error("Error descubriendo servicios")
@@ -196,11 +249,12 @@ class BleRepository(private val context: Context) {
             Log.d(TAG, "🔵 CLIENT: Characteristic: ${characteristic?.uuid}")
             
             if (status == BluetoothGatt.GATT_SUCCESS) {
-                _connectionState.value = ConnectionState.Success("Mensaje enviado con éxito")
                 Log.d(TAG, "🔵 CLIENT: Write SUCCESS - message delivered to server")
+                writeCompletion?.complete(true)
             } else {
-                _connectionState.value = ConnectionState.Error("Error al enviar mensaje: $status")
                 Log.e(TAG, "🔵 CLIENT: Write FAILED with status: $status")
+                _connectionState.value = ConnectionState.Error("Error al enviar mensaje: $status")
+                writeCompletion?.complete(false)
             }
         }
         
@@ -314,6 +368,10 @@ class BleRepository(private val context: Context) {
     
     @SuppressLint("MissingPermission")
     private fun startAdvertising() {
+        // CRÍTICO: Limpiar mensaje recibido al iniciar nueva sesión de advertising
+        _receivedMessage.value = null
+        Log.d(TAG, "🧹 receivedMessage limpiado al iniciar advertising")
+        
         if (bluetoothAdapter == null) {
             Log.e(TAG, "Cannot start advertising: Bluetooth adapter is null")
             _connectionState.value = ConnectionState.Error("Bluetooth no disponible")
@@ -367,6 +425,10 @@ class BleRepository(private val context: Context) {
     
     @SuppressLint("MissingPermission")
     fun startScan(serviceUuid: UUID, onDeviceFound: (BluetoothDevice) -> Unit) {
+        // CRÍTICO: Limpiar mensaje recibido al iniciar nueva sesión de escaneo
+        _receivedMessage.value = null
+        Log.d(TAG, "🧹 receivedMessage limpiado al iniciar scan")
+        
         if (bluetoothAdapter == null) {
             Log.e(TAG, "Cannot start scan: Bluetooth adapter is null")
             _connectionState.value = ConnectionState.Error("Bluetooth no disponible")
@@ -427,39 +489,121 @@ class BleRepository(private val context: Context) {
     }
     
     @SuppressLint("MissingPermission")
-    fun writeEchoMessage(message: String) {
-        Log.d(TAG, "🔵 writeEchoMessage called with ${message.length} bytes")
-        
-        val service = gattClient?.getService(BleConstants.SERVICE_UUID)
-        if (service == null) {
-            Log.e(TAG, "❌ Service not found!")
-            _connectionState.value = ConnectionState.Error("Servicio no encontrado")
-            return
-        }
-        Log.d(TAG, "✅ Service found")
-        
-        val characteristic = service.getCharacteristic(BleConstants.ECHO_CHAR_UUID)
-        if (characteristic == null) {
-            Log.e(TAG, "❌ Characteristic not found!")
-            _connectionState.value = ConnectionState.Error("Característica no encontrada")
-            return
-        }
-        Log.d(TAG, "✅ Characteristic found")
+    suspend fun writeEchoMessage(message: String) {
+        try {
+            Log.d(TAG, "🔵 writeEchoMessage called with ${message.length} bytes")
+            Log.d(TAG, "🔵 TAG is: $TAG (para filtrar logs)")
+            
+            if (gattClient == null) {
+                Log.e(TAG, "❌ gattClient is null!")
+                _connectionState.value = ConnectionState.Error("Cliente BLE no inicializado")
+                return
+            }
+            
+            Log.d(TAG, "✅ gattClient is not null")
+            
+            val service = gattClient?.getService(BleConstants.SERVICE_UUID)
+            if (service == null) {
+                Log.e(TAG, "❌ Service not found!")
+                _connectionState.value = ConnectionState.Error("Servicio no encontrado")
+                return
+            }
+            Log.d(TAG, "✅ Service found")
+            
+            val characteristic = service.getCharacteristic(BleConstants.ECHO_CHAR_UUID)
+            if (characteristic == null) {
+                Log.e(TAG, "❌ Characteristic not found!")
+                _connectionState.value = ConnectionState.Error("Característica no encontrada")
+                return
+            }
+            Log.d(TAG, "✅ Characteristic found")
         
         // Asegurar que se usa WRITE_TYPE_DEFAULT para que el servidor responda
         characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-        characteristic.value = message.toByteArray()
         
-        val success = gattClient?.writeCharacteristic(characteristic) ?: false
+        // Fragmentar mensaje si es muy grande (límite BLE ~200 bytes para mayor estabilidad)
+        val maxChunkSize = 200
+        val messageBytes = message.toByteArray()
+        Log.d(TAG, "🔧 Max chunk size: $maxChunkSize bytes")
         
-        if (!success) {
-            Log.e(TAG, "❌ writeCharacteristic returned false!")
-            _connectionState.value = ConnectionState.Error("Error al escribir característica")
+        if (messageBytes.size <= maxChunkSize) {
+            // Mensaje pequeño, enviar directo
+            Log.d(TAG, "📤 Enviando mensaje completo (${messageBytes.size} bytes)")
+            
+            writeCompletion = CompletableDeferred()
+            characteristic.value = messageBytes
+            Log.d(TAG, "🔵 Llamando gattClient?.writeCharacteristic()...")
+            val initiated = gattClient?.writeCharacteristic(characteristic) ?: false
+            Log.d(TAG, "🔵 writeCharacteristic() returned: $initiated")
+            
+            if (!initiated) {
+                Log.e(TAG, "❌ writeCharacteristic returned false!")
+                _connectionState.value = ConnectionState.Error("Error al escribir característica")
+                return
+            }
+            
+            // Esperar el callback con timeout
+            Log.d(TAG, "⏳ Esperando callback onCharacteristicWrite (max 30s)...")
+            val success = withTimeoutOrNull(30000) {
+                writeCompletion?.await() ?: false
+            } ?: false
+            Log.d(TAG, "🔵 Callback recibido, success=$success")
+            if (success) {
+                Log.d(TAG, "✅ Mensaje enviado exitosamente")
+                _connectionState.value = ConnectionState.Success("Mensaje enviado con éxito")
+                Log.i(TAG, "🎉 [writeEchoMessage] COMPLETADO EXITOSAMENTE - mensaje único enviado")
+            } else {
+                Log.e(TAG, "❌ Escritura falló en callback o timeout")
+                _connectionState.value = ConnectionState.Error("Timeout esperando callback BLE")
+            }
         } else {
-            Log.d(TAG, "✅ writeCharacteristic returned true, waiting for callback...")
+            // Mensaje grande, fragmentar
+            val chunks = messageBytes.asSequence().chunked(maxChunkSize).toList()
+            Log.d(TAG, "📦 Fragmentando mensaje en ${chunks.size} chunks")
+            
+            for ((index, chunk) in chunks.withIndex()) {
+                val chunkBytes = chunk.toByteArray()
+                Log.d(TAG, "📤 Enviando chunk ${index + 1}/${chunks.size} (${chunkBytes.size} bytes)")
+                
+                writeCompletion = CompletableDeferred()
+                characteristic.value = chunkBytes
+                Log.d(TAG, "🔵 Llamando writeCharacteristic para chunk ${index + 1}...")
+                val initiated = gattClient?.writeCharacteristic(characteristic) ?: false
+                Log.d(TAG, "🔵 writeCharacteristic() returned: $initiated")
+                
+                if (!initiated) {
+                    Log.e(TAG, "❌ Chunk ${index + 1} - writeCharacteristic returned false!")
+                    _connectionState.value = ConnectionState.Error("Error al escribir chunk ${index + 1}")
+                    return
+                }
+                
+                // Esperar el callback antes de enviar el siguiente chunk (timeout 30s)
+                Log.d(TAG, "⏳ Esperando callback para chunk ${index + 1} (max 30s)...")
+                val success = withTimeoutOrNull(30000) {
+                    writeCompletion?.await() ?: false
+                } ?: false
+                Log.d(TAG, "🔵 Callback recibido para chunk ${index + 1}, success=$success")
+                if (!success) {
+                    Log.e(TAG, "❌ Chunk ${index + 1} falló en callback o timeout!")
+                    _connectionState.value = ConnectionState.Error("Error al escribir chunk ${index + 1}")
+                    return
+                }
+                
+                Log.d(TAG, "✅ Chunk ${index + 1} enviado exitosamente")
+                
+                // Delay entre chunks para que el servidor procese (150ms)
+                kotlinx.coroutines.delay(150)
+            }
+            
+            Log.d(TAG, "✅ Todos los chunks enviados exitosamente")
+            _connectionState.value = ConnectionState.Success("Mensaje fragmentado enviado")
+            Log.i(TAG, "🎉 [writeEchoMessage] COMPLETADO EXITOSAMENTE - ${chunks.size} chunks enviados")
         }
-        
-        Log.d(TAG, "📤 Writing message: $message")
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Excepción en writeEchoMessage: ${e.message}", e)
+            Log.e(TAG, "❌ Stack trace: ${e.stackTraceToString()}")
+            _connectionState.value = ConnectionState.Error("Excepción BLE: ${e.message}")
+        }
     }
     
     @SuppressLint("MissingPermission")
@@ -508,10 +652,14 @@ class BleRepository(private val context: Context) {
     
     @SuppressLint("MissingPermission")
     fun disconnect() {
+        Log.w(TAG, "🔌 disconnect() llamado!")
+        Log.w(TAG, "🔌 Stack trace: ${Thread.currentThread().stackTrace.take(8).joinToString("\n")}")
         gattClient?.close()
         gattClient = null
         connectedDevice = null
         _connectionState.value = ConnectionState.Idle
+        // CRÍTICO: NO limpiar receivedMessage aquí porque podría contener SELLER_SIG que aún no se procesó
+        // Se limpia al iniciar nueva sesión (startScan/startAdvertising)
         Log.d(TAG, "Disconnected from device")
     }
     

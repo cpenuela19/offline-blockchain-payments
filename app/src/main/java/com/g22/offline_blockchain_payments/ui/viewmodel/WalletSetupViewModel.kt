@@ -99,6 +99,7 @@ class WalletSetupViewModel(application: Application) : AndroidViewModel(applicat
                     
                     android.util.Log.d("WalletSetupViewModel", "✅ Setup local completado - Palabras guardadas temporalmente")
                     
+                    // 7. Transición directa a WalletGenerated (sin approve)
                     _setupState.value = SetupState.WalletGenerated(phrase10)
                 } else {
                     val errorMsg = response.errorBody()?.string() ?: "Error desconocido"

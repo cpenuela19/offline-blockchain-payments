@@ -43,140 +43,53 @@ const settleLimiter = rateLimit({
 // ─────────────────────── Configuración blockchain ─────────────────────
 const CHAIN_ID = parseInt(process.env.CHAIN_ID || '11155111');
 const PRIVATE_KEY = process.env.PRIVATE_KEY_CUENTA_MADRE;
-const CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS_AP;
+const CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS_AP_V2 || process.env.CONTRACT_ADDRESS_AP;
 const CONFIRMATIONS = parseInt(process.env.CONFIRMATIONS || '1');
 
-// Soporte para múltiples RPCs (Infura/Alchemy + fallback público)
-const urls = [
-  process.env.RPC_URL_PRIMARY || process.env.RPC_URL, // principal (Infura)
-  process.env.RPC_URL_SECONDARY,  // secundario (Infura)
-  process.env.RPC_URL_TERTIARY,  // terciario (Infuria)
-  process.env.RPC_URL_QUATERNARY  // Fallback publico
-].filter(Boolean);
+// TEMPORAL: Usar un solo RPC para evitar problemas de quorum
+// Para producción: considerar plan pago de Infura/Alchemy
+const RPC_URL = process.env.RPC_URL_PRIMARY || process.env.RPC_URL || 'https://rpc.sepolia.org';
 
-if (!PRIVATE_KEY || !CONTRACT_ADDRESS || urls.length === 0) {
+if (!PRIVATE_KEY || !CONTRACT_ADDRESS || !RPC_URL) {
   console.error('❌ ERROR: Faltan variables de entorno necesarias');
-  console.error('Verifica PRIVATE_KEY_CUENTA_MADRE, CONTRACT_ADDRESS_AP y RPC_URL_PRIMARY o RPC_URL');
+  console.error('Verifica PRIVATE_KEY_CUENTA_MADRE, CONTRACT_ADDRESS_AP y RPC_URL');
   process.exit(1);
 }
 
-// Crear proveedor con fallback automático (red fijada para evitar "failed to detect network")
-const sepoliaNet = ethers.Network.from(11155111); // o usa CHAIN_ID si quieres: ethers.Network.from(CHAIN_ID)
+// Crear proveedor simple (sin fallback para evitar problemas de quorum)
+const sepoliaNet = ethers.Network.from(11155111);
 
-const fallbacks = urls.map((u) => ({
-  provider: new ethers.JsonRpcProvider(
-    u,
-    sepoliaNet,                 // fija la red (evita auto-detección)
-    { staticNetwork: sepoliaNet } // desactiva el sondeo de red
-  ),
-  weight: 1,
-  stallTimeout: 1500, // pequeño margen más alto
-}));
-
-const provider = new ethers.FallbackProvider(fallbacks);
+const provider = new ethers.JsonRpcProvider(
+  RPC_URL,
+  sepoliaNet,
+  { staticNetwork: sepoliaNet }
+);
 
 
 // Conectar la wallet (cuenta madre)
 const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
 console.log(`✅ Cuenta madre conectada: ${wallet.address}`);
-console.log(`🌐 RPCs configurados:`);
-urls.forEach((u, i) => console.log(`   [${i + 1}] ${u}`));
+console.log(`🌐 RPC configurado: ${RPC_URL}`);
 
 // ABI mínimo del ERC-20
-const ERC20_ABI = [
+const ERC20_PERMIT_ABI = [
   "function transfer(address to, uint256 amount) external returns (bool)",
   "function transferFrom(address from, address to, uint256 amount) external returns (bool)",
-  "function approve(address spender, uint256 amount) external returns (bool)",
-  "function allowance(address owner, address spender) external view returns (uint256)",
   "function balanceOf(address account) external view returns (uint256)",
-  "function decimals() external view returns (uint8)"
+  "function allowance(address owner, address spender) external view returns (uint256)",
+  "function decimals() external view returns (uint8)",
+  "function mint(address to, uint256 amount) external",
+  // EIP-2612 (permit)
+  "function permit(address owner, address spender, uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s) external",
+  "function nonces(address owner) external view returns (uint256)",
+  "function DOMAIN_SEPARATOR() external view returns (bytes32)"
 ];
 
 // Instanciar contrato AgroPuntos
-const tokenContract = new ethers.Contract(CONTRACT_ADDRESS, ERC20_ABI, wallet);
+const tokenContract = new ethers.Contract(CONTRACT_ADDRESS, ERC20_PERMIT_ABI, wallet);
 console.log(`🔗 Contrato conectado: ${CONTRACT_ADDRESS}`);
 
 // Límites offline eliminados - sin restricciones de monto
-
-// Claves privadas de usuarios de prueba (para approve automático)
-// En producción, esto debería venir de una base de datos segura o wallet management
-const PRIV_KEY_A = process.env.PRIV_KEY_A; // Buyer (Juan)
-const PRIV_KEY_B = process.env.PRIV_KEY_B; // Seller (María)
-const MOTHER_ADDRESS = process.env.MOTHER_ADDRESS || wallet.address;
-
-// Mapa de direcciones a claves privadas para approve automático
-const addressToPrivateKey = new Map();
-if (PRIV_KEY_A) {
-  try {
-    const walletA = new ethers.Wallet(PRIV_KEY_A);
-    addressToPrivateKey.set(walletA.address.toLowerCase(), PRIV_KEY_A);
-    console.log(`✅ Clave privada A configurada para: ${walletA.address}`);
-  } catch (e) {
-    console.warn(`⚠️  Error configurando PRIV_KEY_A: ${e.message}`);
-  }
-}
-if (PRIV_KEY_B) {
-  try {
-    const walletB = new ethers.Wallet(PRIV_KEY_B);
-    addressToPrivateKey.set(walletB.address.toLowerCase(), PRIV_KEY_B);
-    console.log(`✅ Clave privada B configurada para: ${walletB.address}`);
-  } catch (e) {
-    console.warn(`⚠️  Error configurando PRIV_KEY_B: ${e.message}`);
-  }
-}
-
-/**
- * Asegura que una dirección tenga suficiente allowance hacia la cuenta madre.
- * Si no tiene suficiente, intenta hacer approve automáticamente.
- * @param {string} buyerAddress - Dirección del buyer
- * @param {bigint} requiredAmount - Cantidad requerida en wei
- * @returns {Promise<boolean>} - true si tiene suficiente allowance (o se aprobó), false si falló
- */
-async function ensureAllowance(buyerAddress, requiredAmount) {
-  const buyerLower = buyerAddress.toLowerCase();
-  
-  // Verificar allowance actual
-  const currentAllowance = await tokenContract.allowance(buyerAddress, MOTHER_ADDRESS);
-  
-  if (currentAllowance >= requiredAmount) {
-    console.log(`[APPROVE] ${buyerAddress} ya tiene suficiente allowance: ${currentAllowance.toString()}`);
-    return true;
-  }
-  
-  console.log(`[APPROVE] ${buyerAddress} necesita approve. Allowance actual: ${currentAllowance.toString()}, requerido: ${requiredAmount.toString()}`);
-  
-  // Buscar clave privada del buyer
-  const buyerPrivateKey = addressToPrivateKey.get(buyerLower);
-  if (!buyerPrivateKey) {
-    console.error(`[APPROVE] ❌ No se encontró clave privada para ${buyerAddress}. No se puede hacer approve automático.`);
-    console.error(`[APPROVE] 💡 Agrega PRIV_KEY_A o PRIV_KEY_B en .env para habilitar approve automático.`);
-    return false;
-  }
-  
-  try {
-    // Crear wallet del buyer
-    const buyerWallet = new ethers.Wallet(buyerPrivateKey, provider);
-    const buyerTokenContract = new ethers.Contract(CONTRACT_ADDRESS, ERC20_ABI, buyerWallet);
-    
-    console.log(`[APPROVE] 🔐 Haciendo approve automático desde ${buyerAddress} hacia ${MOTHER_ADDRESS}...`);
-    
-    // Hacer approve de MaxUint256 para evitar tener que hacerlo múltiples veces
-    const approveTx = await buyerTokenContract.approve(MOTHER_ADDRESS, ethers.MaxUint256);
-    console.log(`[APPROVE] 📝 Transacción approve enviada: ${approveTx.hash}`);
-    
-    // Esperar confirmación
-    await approveTx.wait(1);
-    
-    // Verificar nuevo allowance
-    const newAllowance = await tokenContract.allowance(buyerAddress, MOTHER_ADDRESS);
-    console.log(`[APPROVE] ✅ Approve confirmado. Nuevo allowance: ${newAllowance.toString()}`);
-    
-    return newAllowance >= requiredAmount;
-  } catch (e) {
-    console.error(`[APPROVE] ❌ Error haciendo approve automático: ${e.message}`);
-    return false;
-  }
-}
 
 let DECIMALS_CACHE = null;
 async function getDecimals() {
@@ -263,6 +176,9 @@ function migrateForOfflineSchema() {
   db.run(`ALTER TABLE vouchers ADD COLUMN expiry INTEGER`, () => {});
   db.run(`ALTER TABLE vouchers ADD COLUMN asset TEXT`, () => {});
   db.run(`ALTER TABLE vouchers ADD COLUMN amount_ap_str TEXT`, () => {});
+  // Columnas para EIP-2612 (permit)
+  db.run(`ALTER TABLE vouchers ADD COLUMN permit_tx_hash TEXT`, () => {});
+  db.run(`ALTER TABLE vouchers ADD COLUMN transfer_tx_hash TEXT`, () => {});
   db.run(`
     CREATE TABLE IF NOT EXISTS outbox (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -344,6 +260,119 @@ function verifySignature(canonicalString, signature, expectedAddress) {
     return recovered.toLowerCase() === String(expectedAddress).toLowerCase();
   } catch (_e) {
     return false;
+  }
+}
+
+/**
+ * Ejecuta permit() + transferFrom() usando datos firmados off-chain
+ * @param {Object} permitData - { owner, spender, value, nonce, deadline }
+ * @param {Object} signature - { v, r, s }
+ * @param {string} seller - Dirección del vendedor
+ * @param {string} amount - Cantidad en AP (ej: "100")
+ * @returns {Object} { permitTxHash, transferTxHash }
+ */
+async function settleWithPermit(permitData, signature, seller, amount) {
+  try {
+    console.log('[SETTLE_PERMIT] 🚀 Iniciando settle con permit...');
+    console.log('[SETTLE_PERMIT] Owner:', permitData.owner);
+    console.log('[SETTLE_PERMIT] Spender:', permitData.spender);
+    console.log('[SETTLE_PERMIT] Value:', permitData.value);
+    console.log('[SETTLE_PERMIT] Deadline:', permitData.deadline);
+    console.log('[SETTLE_PERMIT] Nonce:', permitData.nonce);
+    
+    // Verificar deadline
+    const now = Math.floor(Date.now() / 1000);
+    if (permitData.deadline < now) {
+      throw new Error(`Permit expirado. Deadline: ${permitData.deadline}, Now: ${now}`);
+    }
+    
+    // CRÍTICO: Verificar nonce del blockchain antes de ejecutar permit
+    console.log('[SETTLE_PERMIT] 🔍 Verificando nonce del blockchain...');
+    const blockchainNonce = await tokenContract.nonces(permitData.owner);
+    const expectedNonce = BigInt(blockchainNonce);
+    const providedNonce = BigInt(permitData.nonce);
+    
+    console.log(`[SETTLE_PERMIT] Nonce del blockchain: ${expectedNonce.toString()}`);
+    console.log(`[SETTLE_PERMIT] Nonce proporcionado: ${providedNonce.toString()}`);
+    
+    if (providedNonce !== expectedNonce) {
+      throw new Error(
+        `NONCE_MISMATCH: El nonce proporcionado (${providedNonce}) no coincide con el nonce del blockchain (${expectedNonce}). ` +
+        `El usuario debe sincronizar su wallet antes de intentar esta transacción.`
+      );
+    }
+    
+    console.log('[SETTLE_PERMIT] ✅ Nonce verificado correctamente');
+    
+    // IMPORTANTE: permitData.value ya viene en wei desde la app
+    // NO usar parseUnits porque multiplicaría por 10^18 de nuevo
+    const permitValue = BigInt(permitData.value);
+    const transferAmount = ethers.parseUnits(amount, 18);
+    
+    console.log(`[SETTLE_PERMIT] 📊 Comparando valores:`);
+    console.log(`  Permit value: ${permitValue.toString()} wei`);
+    console.log(`  Transfer amount: ${transferAmount.toString()} wei`);
+    
+    if (permitValue < transferAmount) {
+      throw new Error(`Permit insuficiente. Permit: ${permitData.value} wei, Transfer: ${amount} AP (${transferAmount} wei)`);
+    }
+    
+    // Convertir deadline y nonce a BigInt (crítico para evitar truncamiento)
+    const deadlineBigInt = BigInt(permitData.deadline);
+    const nonceBigInt = BigInt(permitData.nonce);
+    
+    console.log('[SETTLE_PERMIT] 📊 Valores para permit:');
+    console.log(`  Owner: ${permitData.owner}`);
+    console.log(`  Spender: ${permitData.spender}`);
+    console.log(`  Value: ${permitValue.toString()} wei`);
+    console.log(`  Deadline: ${deadlineBigInt.toString()}`);
+    console.log(`  Nonce: ${nonceBigInt.toString()}`);
+    console.log(`  v: ${signature.v}`);
+    console.log(`  r: ${signature.r}`);
+    console.log(`  s: ${signature.s}`);
+    
+    // Paso 1: Ejecutar permit()
+    console.log('[SETTLE_PERMIT] 📝 Ejecutando permit()...');
+    const permitTx = await tokenContract.permit(
+      permitData.owner,
+      permitData.spender,
+      permitValue,
+      deadlineBigInt,  // BigInt en lugar de number
+      signature.v,
+      signature.r,
+      signature.s
+    );
+    
+    console.log(`[SETTLE_PERMIT] 🔄 Permit TX enviada: ${permitTx.hash}`);
+    console.log(`[SETTLE_PERMIT] ⏳ Esperando ${CONFIRMATIONS} confirmación(es)...`);
+    
+    const permitReceipt = await permitTx.wait(CONFIRMATIONS);
+    console.log(`[SETTLE_PERMIT] ✅ Permit confirmado en bloque: ${permitReceipt.blockNumber}`);
+    
+    // Paso 2: Ejecutar transferFrom()
+    console.log('[SETTLE_PERMIT] 💸 Ejecutando transferFrom()...');
+    const transferTx = await tokenContract.transferFrom(
+      permitData.owner,
+      seller,
+      transferAmount
+    );
+    
+    console.log(`[SETTLE_PERMIT] 🔄 Transfer TX enviada: ${transferTx.hash}`);
+    console.log(`[SETTLE_PERMIT] ⏳ Esperando ${CONFIRMATIONS} confirmación(es)...`);
+    
+    const transferReceipt = await transferTx.wait(CONFIRMATIONS);
+    console.log(`[SETTLE_PERMIT] ✅ Transfer confirmado en bloque: ${transferReceipt.blockNumber}`);
+    
+    console.log('[SETTLE_PERMIT] 🎉 Settle completado exitosamente');
+    
+    return {
+      permitTxHash: permitTx.hash,
+      transferTxHash: transferTx.hash
+    };
+    
+  } catch (error) {
+    console.error('[SETTLE_PERMIT] ❌ Error:', error.message);
+    throw error;
   }
 }
 
@@ -756,8 +785,19 @@ app.post('/v1/vouchers/settle', settleLimiter, async (req, res) => {
     const {
       offer_id, amount_ap, asset, expiry,
       seller_address, seller_sig,
-      buyer_address, buyer_sig
+      buyer_address, buyer_sig,
+      canonical,
+      permit,        // NUEVO: Datos del permit
+      permit_sig     // NUEVO: Firma del permit
     } = req.body || {};
+
+    console.log(`\n${'='.repeat(80)}`);
+    console.log(`[SETTLE] 📦 Nueva solicitud de settle con PERMIT`);
+    console.log(`[SETTLE] Offer ID: ${offer_id}`);
+    console.log(`[SETTLE] Buyer: ${buyer_address}`);
+    console.log(`[SETTLE] Seller: ${seller_address}`);
+    console.log(`[SETTLE] Amount: ${amount_ap} AP`);
+    console.log(`${'='.repeat(80)}\n`);
 
     // ═══════════════════════════════════════════════════════════════════
     // VALIDACIONES BÁSICAS
@@ -766,6 +806,31 @@ app.post('/v1/vouchers/settle', settleLimiter, async (req, res) => {
     if (!offer_id || !amount_ap || !asset || !expiry || !seller_address || !seller_sig || !buyer_address || !buyer_sig) {
       console.warn(`🔒 [SETTLE] Campos faltantes en request`);
       return res.status(400).json({ error_code: 'BAD_REQUEST', message: 'Missing fields' });
+    }
+    
+    // NUEVO: Validar campos de permit
+    if (!permit || !permit_sig) {
+      console.log('[SETTLE] ❌ Faltan datos de permit');
+      return res.status(400).json({
+        error_code: 'MISSING_PERMIT',
+        message: 'Se requieren datos de permit (permit y permit_sig)'
+      });
+    }
+    
+    if (!permit.owner || !permit.spender || !permit.value || !permit.deadline || permit.nonce === undefined) {
+      console.log('[SETTLE] ❌ Datos de permit incompletos');
+      return res.status(400).json({
+        error_code: 'INVALID_PERMIT_DATA',
+        message: 'Datos de permit incompletos (requiere: owner, spender, value, nonce, deadline)'
+      });
+    }
+    
+    if (!permit_sig.v || !permit_sig.r || !permit_sig.s) {
+      console.log('[SETTLE] ❌ Firma de permit inválida');
+      return res.status(400).json({
+        error_code: 'INVALID_PERMIT_SIGNATURE',
+        message: 'Firma de permit inválida (requiere: v, r, s)'
+      });
     }
     
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(offer_id))) {
@@ -847,21 +912,24 @@ app.post('/v1/vouchers/settle', settleLimiter, async (req, res) => {
     // CANONICALIZACIÓN Y VERIFICACIÓN DE FIRMAS
     // ═══════════════════════════════════════════════════════════════════
     
-    const base = {
-      offer_id,
-      amount_ap: String(amount_ap),
-      asset,
-      expiry: Number(expiry),
-      seller_address: sellerLower,
-      buyer_address: buyerLower
-    };
-    
-    let canonical;
-    try {
-      canonical = canonicalizePaymentBase(base);
-    } catch (e) {
-      console.error(`🔒 [SETTLE] Error canonicalizando: ${e.message}`);
-      return res.status(400).json({ error_code: 'BAD_CANONICAL', message: String(e.message) });
+    // Si canonical viene en el body, usarlo; si no, calcularlo
+    let canonicalMsg = canonical;
+    if (!canonicalMsg) {
+      const base = {
+        offer_id,
+        amount_ap: String(amount_ap),
+        asset,
+        expiry: Number(expiry),
+        seller_address: sellerLower,
+        buyer_address: buyerLower
+      };
+      
+      try {
+        canonicalMsg = canonicalizePaymentBase(base);
+      } catch (e) {
+        console.error(`🔒 [SETTLE] Error canonicalizando: ${e.message}`);
+        return res.status(400).json({ error_code: 'BAD_CANONICAL', message: String(e.message) });
+      }
     }
 
     console.log(`🔒 [SETTLE] Verificando firmas para ${offer_id}...`);
@@ -870,11 +938,11 @@ app.post('/v1/vouchers/settle', settleLimiter, async (req, res) => {
     console.log(`   Amount: ${amount_ap} AP`);
 
     // Verificar firma del seller
-    const okSeller = verifySignature(canonical, seller_sig, sellerLower);
+    const okSeller = verifySignature(canonicalMsg, seller_sig, sellerLower);
     if (!okSeller) {
       console.error(`🚨 [SETTLE] FIRMA INVÁLIDA: Seller signature falló - ${sellerLower}`);
       console.error(`   offer_id: ${offer_id}`);
-      console.error(`   canonical: ${canonical}`);
+      console.error(`   canonical: ${canonicalMsg}`);
       console.error(`   seller_sig: ${seller_sig}`);
       return res.status(422).json({ 
         error_code: 'INVALID_SELLER_SIGNATURE', 
@@ -883,11 +951,11 @@ app.post('/v1/vouchers/settle', settleLimiter, async (req, res) => {
     }
 
     // Verificar firma del buyer
-    const okBuyer = verifySignature(canonical, buyer_sig, buyerLower);
+    const okBuyer = verifySignature(canonicalMsg, buyer_sig, buyerLower);
     if (!okBuyer) {
       console.error(`🚨 [SETTLE] FIRMA INVÁLIDA: Buyer signature falló - ${buyerLower}`);
       console.error(`   offer_id: ${offer_id}`);
-      console.error(`   canonical: ${canonical}`);
+      console.error(`   canonical: ${canonicalMsg}`);
       console.error(`   buyer_sig: ${buyer_sig}`);
       return res.status(422).json({ 
         error_code: 'INVALID_BUYER_SIGNATURE', 
@@ -895,57 +963,248 @@ app.post('/v1/vouchers/settle', settleLimiter, async (req, res) => {
       });
     }
 
-    console.log(`✅ [SETTLE] Firmas verificadas exitosamente para ${offer_id}`);
+    console.log(`✅ [SETTLE] Firmas del voucher verificadas exitosamente para ${offer_id}`);
 
-    // Verificar si el voucher ya existe
-    db.get('SELECT offer_id, tx_hash, status FROM vouchers WHERE offer_id=?', [offer_id], (err, row) => {
-          if (err) return res.status(500).json({ error_code: 'DB_ERROR', message: 'DB read error' });
-
-          if (row && row.tx_hash && row.status === 'SUBIDO_OK') {
-            return res.status(200).json({ status: 'already_settled', tx_hash: row.tx_hash });
-          }
-
-          const ts = Math.floor(Date.now() / 1000);
-          const upsert = () => {
-            db.run(
-              `INSERT INTO vouchers (
-                 offer_id, amount_ap, buyer_alias, seller_alias, tx_hash, status, onchain_status, created_at, updated_at,
-                 payload_canonical, seller_address, buyer_address, seller_sig, buyer_sig, expiry, asset, amount_ap_str
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-               ON CONFLICT(offer_id) DO UPDATE SET
-                 payload_canonical=excluded.payload_canonical,
-                 seller_address=excluded.seller_address,
-                 buyer_address=excluded.buyer_address,
-                 seller_sig=excluded.seller_sig,
-                 buyer_sig=excluded.buyer_sig,
-                 expiry=excluded.expiry,
-                 asset=excluded.asset,
-                 amount_ap_str=excluded.amount_ap_str,
-                 updated_at=excluded.updated_at`,
-              [
-                offer_id,
-                Math.floor(amountNumeric), '', '', null,
-                'RECEIVED', 'PENDING',
-                ts, ts,
-                canonical, sellerLower, buyerLower, seller_sig, buyer_sig,
-                Number(expiry), 'AP', String(amount_ap)
-              ],
-              (insErr) => {
-                if (insErr) return res.status(500).json({ error_code: 'DB_ERROR', message: 'DB insert/update error' });
-                enqueueOutbox(offer_id, (qErr) => {
-                  if (qErr) return res.status(500).json({ error_code: 'OUTBOX_ERROR', message: 'enqueue failed' });
-                  return res.status(200).json({ status: 'queued' });
-                });
-              }
-            );
-          };
-
-          if (!row) return upsert();
-          upsert();
+    // ═══════════════════════════════════════════════════════════════════
+    // IDEMPOTENCIA: Verificar si el voucher ya existe O está en proceso
+    // ═══════════════════════════════════════════════════════════════════
+    
+    const existing = await new Promise((resolve, reject) => {
+      db.get(
+        'SELECT offer_id, permit_tx_hash, transfer_tx_hash, status FROM vouchers WHERE offer_id = ?',
+        [offer_id],
+        (err, row) => {
+          if (err) reject(err);
+          else resolve(row);
+        }
+      );
+    });
+    
+    if (existing) {
+      // Si tiene transfer_tx_hash, ya está completado
+      if (existing.transfer_tx_hash) {
+        console.log(`[SETTLE] ⚠️  Voucher ya procesado: ${offer_id}`);
+        console.log(`[SETTLE]    Transfer TX: ${existing.transfer_tx_hash}`);
+        return res.json({
+          status: 'already_settled',
+          offer_id: offer_id,
+          message: 'Voucher ya fue procesado anteriormente (idempotencia)',
+          permit_tx_hash: existing.permit_tx_hash,
+          transfer_tx_hash: existing.transfer_tx_hash
         });
+      }
+      
+      // Si está marcado como PROCESSING, es un duplicado en progreso
+      if (existing.status === 'PROCESSING') {
+        console.log(`[SETTLE] ⚠️  Voucher ya está siendo procesado por otra petición: ${offer_id}`);
+        // Esperar un poco y reintentar la consulta
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        const updated = await new Promise((resolve, reject) => {
+          db.get(
+            'SELECT offer_id, permit_tx_hash, transfer_tx_hash FROM vouchers WHERE offer_id = ?',
+            [offer_id],
+            (err, row) => {
+              if (err) reject(err);
+              else resolve(row);
+            }
+          );
+        });
+        
+        if (updated && updated.transfer_tx_hash) {
+          console.log(`[SETTLE] ✅ Procesamiento completado por otra petición: ${offer_id}`);
+          return res.json({
+            status: 'already_settled',
+            offer_id: offer_id,
+            message: 'Procesado por petición paralela',
+            permit_tx_hash: updated.permit_tx_hash,
+            transfer_tx_hash: updated.transfer_tx_hash
+          });
+        } else {
+          console.log(`[SETTLE] ⚠️  Procesamiento aún en curso, abortando duplicado: ${offer_id}`);
+          return res.status(409).json({
+            error_code: 'PROCESSING_IN_PROGRESS',
+            message: 'Voucher está siendo procesado por otra petición'
+          });
+        }
+      }
+    }
+    
+    // ═══════════════════════════════════════════════════════════════════
+    // BLOQUEO OPTIMISTA: Marcar como "PROCESSING" para evitar duplicados
+    // ═══════════════════════════════════════════════════════════════════
+    
+    const lockAcquired = await new Promise((resolve, reject) => {
+      const nowMs = Math.floor(Date.now() / 1000);
+      db.run(
+        `INSERT OR IGNORE INTO vouchers (
+          offer_id, buyer_address, seller_address, amount_ap_str,
+          asset, expiry, status, created_at, updated_at,
+          buyer_sig, seller_sig, payload_canonical,
+          buyer_alias, seller_alias, amount_ap
+        ) VALUES (?, ?, ?, ?, ?, ?, 'PROCESSING', ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          offer_id, buyerLower, sellerLower, String(amount_ap),
+          asset, expiry, nowMs, nowMs,
+          buyer_sig, seller_sig, canonicalMsg,
+          buyerLower.substring(0, 10), sellerLower.substring(0, 10),
+          amount_ap
+        ],
+        function(err) {
+          if (err) {
+            console.error(`[SETTLE] ❌ Error adquiriendo bloqueo: ${err.message}`);
+            reject(err);
+          } else {
+            // Si changes === 0, significa que otro proceso ya insertó (UNIQUE constraint)
+            resolve(this.changes > 0);
+          }
+        }
+      );
+    });
+    
+    if (!lockAcquired) {
+      console.log(`[SETTLE] ⚠️  Otro proceso ya adquirió el bloqueo para: ${offer_id}`);
+      // Esperar más tiempo para que la primera petición complete (máximo 15 segundos)
+      let attempts = 0;
+      const maxAttempts = 5; // 5 intentos × 3 segundos = 15 segundos máximo
+      
+      while (attempts < maxAttempts) {
+        await new Promise(resolve => setTimeout(resolve, 3000)); // Esperar 3 segundos
+        
+        const result = await new Promise((resolve, reject) => {
+          db.get(
+            'SELECT offer_id, permit_tx_hash, transfer_tx_hash, status FROM vouchers WHERE offer_id = ?',
+            [offer_id],
+            (err, row) => {
+              if (err) reject(err);
+              else resolve(row);
+            }
+          );
+        });
+        
+        if (result && result.transfer_tx_hash) {
+          console.log(`[SETTLE] ✅ Primera petición completó el procesamiento de: ${offer_id}`);
+          return res.json({
+            status: 'already_settled',
+            offer_id: offer_id,
+            message: 'Procesado por petición paralela',
+            permit_tx_hash: result.permit_tx_hash,
+            transfer_tx_hash: result.transfer_tx_hash
+          });
+        } else if (result && result.status === 'FAILED') {
+          console.log(`[SETTLE] ❌ Primera petición falló para: ${offer_id}`);
+          return res.status(500).json({
+            error_code: 'PROCESSING_FAILED',
+            message: 'La primera petición falló, reintente'
+          });
+        }
+        
+        attempts++;
+        console.log(`[SETTLE] ⏳ Esperando... intento ${attempts}/${maxAttempts}`);
+      }
+      
+      // Si después de 15 segundos aún no se completó, retornar error
+      return res.status(409).json({
+        error_code: 'PROCESSING_TIMEOUT',
+        message: 'Voucher está siendo procesado, reintente más tarde'
+      });
+    }
+    
+    console.log(`[SETTLE] 🔒 Bloqueo adquirido para: ${offer_id}`);
+
+    // ═══════════════════════════════════════════════════════════════════
+    // EJECUTAR PERMIT + TRANSFERFROM
+    // ═══════════════════════════════════════════════════════════════════
+    
+    console.log('[SETTLE] 🚀 Ejecutando settle con permit...');
+    
+    const result = await settleWithPermit(permit, permit_sig, sellerLower, String(amount_ap));
+    
+    console.log(`[SETTLE] ✅ Permit TX: ${result.permitTxHash}`);
+    console.log(`[SETTLE] ✅ Transfer TX: ${result.transferTxHash}`);
+    
+    // ═══════════════════════════════════════════════════════════════════
+    // GUARDAR EN DB
+    // ═══════════════════════════════════════════════════════════════════
+    
+    const nowMs = Date.now();
+    
+    await new Promise((resolve, reject) => {
+      db.run(
+        `INSERT OR REPLACE INTO vouchers (
+          offer_id, buyer_address, seller_address, amount_ap, status, 
+          buyer_sig, seller_sig, payload_canonical, expiry, 
+          permit_tx_hash, transfer_tx_hash, tx_hash, created_at, updated_at,
+          asset, amount_ap_str, onchain_status,
+          buyer_alias, seller_alias
+        )
+        VALUES (?, ?, ?, ?, 'SETTLED', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'CONFIRMED', ?, ?)`,
+        [
+          offer_id,
+          buyerLower,
+          sellerLower,
+          Math.floor(amountNumeric),
+          buyer_sig,
+          seller_sig,
+          canonicalMsg || '',
+          Number(expiry),
+          result.permitTxHash,
+          result.transferTxHash,
+          result.transferTxHash, // tx_hash apunta al transfer para compatibilidad
+          nowMs,
+          nowMs,
+          'AP',
+          String(amount_ap),
+          // Usar primeros caracteres de address como alias (para compatibilidad con schema)
+          buyerLower.substring(0, 10),
+          sellerLower.substring(0, 10)
+        ],
+        (err) => {
+          if (err) reject(err);
+          else resolve();
+        }
+      );
+    });
+    
+    console.log('[SETTLE] ✅ Voucher guardado en DB');
+    console.log(`[SETTLE] 🎉 SETTLE COMPLETADO EXITOSAMENTE\n`);
+    
+    res.json({
+      status: 'queued',  // ← CRÍTICO: Campo 'status' que la app espera
+      offer_id: offer_id,
+      permit_tx_hash: result.permitTxHash,
+      transfer_tx_hash: result.transferTxHash,
+      buyer_address: buyerLower,
+      seller_address: sellerLower,
+      amount_ap: String(amount_ap)
+    });
+    
   } catch (e) {
-    console.error('Error in /v1/vouchers/settle:', e);
-    return res.status(500).json({ error_code: 'INTERNAL_ERROR', message: 'Unexpected server error' });
+    console.error('[SETTLE] ❌ Error fatal:', e);
+    
+    // Obtener offer_id de forma segura (puede no estar definido si el error fue muy temprano)
+    const safeOfferId = req.body?.offer_id;
+    
+    // Limpiar el bloqueo si falla (marcar como FAILED en lugar de PROCESSING)
+    if (safeOfferId) {
+      try {
+        await new Promise((resolve) => {
+          db.run(
+            'UPDATE vouchers SET status = ?, updated_at = ? WHERE offer_id = ? AND status = ?',
+            ['FAILED', Math.floor(Date.now() / 1000), safeOfferId, 'PROCESSING'],
+            () => resolve()
+          );
+        });
+        console.log(`[SETTLE] 🧹 Bloqueo limpiado para: ${safeOfferId}`);
+      } catch (cleanupErr) {
+        console.error('[SETTLE] ❌ Error limpiando bloqueo:', cleanupErr);
+      }
+    }
+    
+    res.status(500).json({
+      error_code: 'SETTLE_FAILED',
+      message: e.message || 'Error al procesar settle'
+    });
   }
 });
 
@@ -1297,8 +1556,7 @@ app.get('/health', (req, res) => {
 const HOST = process.env.HOST || '0.0.0.0'; // Escuchar en todas las interfaces para permitir conexiones desde la red local
 app.listen(PORT, HOST, () => {
   console.log(`Servidor escuchando en ${HOST}:${PORT}`);
-  console.log(`RPCs activos:`);
-  urls.forEach((u, i) => console.log(`  [${i + 1}] ${u}`));
+  console.log(`RPC activo: ${RPC_URL}`);
   console.log(`Contrato: ${CONTRACT_ADDRESS}`);
   processOutboxOnce();
 });

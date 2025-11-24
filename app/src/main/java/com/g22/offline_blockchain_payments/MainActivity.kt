@@ -254,25 +254,19 @@ class MainActivity : ComponentActivity() {
                         composable("buyer/start") {
                             SendScreen(
                                 viewModel = paymentBleViewModel,
+                                walletViewModel = walletViewModel,
                                 onBack = {
                                     navController.popBackStack()
                                 },
                                 onPaymentSuccess = { transactionId, amount ->
-                                    // Guardar datos reales de la transacción
+                                    // IMPORTANTE: SendScreen ya hace TODO:
+                                    // - Descuenta puntos (en sendPaymentConfirmation) ✅
+                                    // - Crea voucher (en handleSellerSignature) ✅
+                                    // - Incrementa nonce (en handleSellerSignature) ✅
+                                    // Solo necesitamos guardar datos para la UI y navegar
+                                    
                                     currentTransactionId = paymentBleViewModel.currentTransactionId.value ?: transactionId
                                     buyerAmount = amount
-                                    
-                                    // Crear voucher con settle (offline con firmas)
-                                    val paymentTx = paymentBleViewModel.paymentTransaction.value
-                                    voucherViewModel.createSettledVoucher(
-                                        role = com.g22.offline_blockchain_payments.ui.data.Role.BUYER,
-                                        amountAp = amount,
-                                        counterparty = paymentTx?.receiverName ?: "Vendedor",
-                                        offerId = transactionId
-                                    )
-                                    
-                                    // Descontar puntos del comprador
-                                    walletViewModel.deductPoints(amount)
                                     
                                     navController.navigate("buyer/receipt")
                                 }
@@ -328,21 +322,16 @@ class MainActivity : ComponentActivity() {
                                 },
                                 onPaymentReceived = { amount, transactionId ->
                                     android.util.Log.d("MainActivity", "🎯 onPaymentReceived called: amount=$amount, transactionId=$transactionId")
-                                    // Guardar datos reales de la transacción
+                                    
+                                    // IMPORTANTE: ReceiveScreen ya hace TODO:
+                                    // - Verifica firma del comprador ✅
+                                    // - Firma como vendedor ✅
+                                    // - Suma pending points (en verifyAndSignAsSeller) ✅
+                                    // - Crea voucher con createSettledVoucherWithAddresses ✅
+                                    // Solo necesitamos guardar datos para la UI y navegar
+                                    
                                     currentTransactionId = paymentBleViewModel.currentTransactionId.value ?: transactionId
                                     sellerAmount = amount
-                                    
-                                    // Crear voucher con settle (offline con firmas)
-                                    val paymentTx = paymentBleViewModel.paymentTransaction.value
-                                    voucherViewModel.createSettledVoucher(
-                                        role = com.g22.offline_blockchain_payments.ui.data.Role.SELLER,
-                                        amountAp = amount,
-                                        counterparty = paymentTx?.senderName ?: "Comprador",
-                                        offerId = transactionId
-                                    )
-                                    
-                                    // Agregar puntos pendientes al vendedor
-                                    walletViewModel.addPendingPoints(amount)
                                     
                                     android.util.Log.d("MainActivity", "📱 Navigating to seller/receipt...")
                                     navController.navigate("seller/receipt")

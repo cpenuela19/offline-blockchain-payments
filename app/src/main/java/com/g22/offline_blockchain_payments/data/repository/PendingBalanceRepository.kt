@@ -53,9 +53,25 @@ class PendingBalanceRepository(private val database: AppDatabase) {
     
     /**
      * Elimina todos los vouchers sincronizados (limpieza)
+     * @return Número de filas eliminadas
      */
-    suspend fun deleteSynced() {
-        dao.deleteSynced()
+    suspend fun deleteSynced(): Int {
+        return dao.deleteSynced()
+    }
+    
+    /**
+     * Elimina el último voucher outgoing pendiente (usado para rollback)
+     */
+    suspend fun deleteLastOutgoingPending(amountAp: Long) {
+        dao.deleteLastOutgoingPending(amountAp)
+    }
+    
+    /**
+     * Elimina TODOS los vouchers outgoing pendientes no sincronizados.
+     * Se usa cuando el balance real desde blockchain refleja que las transacciones ya se confirmaron.
+     */
+    suspend fun deleteAllOutgoingPending(): Int {
+        return dao.deleteAllOutgoingPending()
     }
 }
 

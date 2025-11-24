@@ -84,6 +84,9 @@ dependencies {
     // Ethereum crypto (para firmas ECDSA)
     implementation("org.web3j:crypto:4.9.8")
     
+    // Web3j Core (para llamadas RPC y lectura de nonce)
+    implementation("org.web3j:core:4.9.8")
+    
     // BouncyCastle para web3j (necesario para ECDSA secp256k1)
     implementation("org.bouncycastle:bcprov-jdk15on:1.70")
     
