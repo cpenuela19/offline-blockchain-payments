@@ -38,9 +38,10 @@ import kotlinx.coroutines.launch
 fun InitialChoiceScreen(
     onSellClick: () -> Unit,
     onBuyClick: () -> Unit,
-    availablePoints: Long = 58200,
-    pendingPoints: Long = 20000,
-    walletViewModel: WalletViewModel? = null
+    availablePoints: Long = 1000,  // Default para Preview (1000 AP inicial)
+    pendingPoints: Long = 0,        // Default para Preview (sin pendientes)
+    walletViewModel: WalletViewModel? = null,
+    isSyncing: Boolean = false
 ) {
     // Estado para controlar la animación de refresh
     var isRefreshing by remember { mutableStateOf(false) }
@@ -102,12 +103,23 @@ fun InitialChoiceScreen(
                                     color = LightSteelBlue,
                                     fontSize = 12.sp
                                 )
-                                Text(
-                                    text = "${NumberFormatter.formatAmount(availablePoints)} AP",
-                                    color = Color(0xFF4CAF50),
-                                    fontSize = 24.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
+                                if (isSyncing) {
+                                    // Mostrar indicador de sincronización
+                                    Text(
+                                        text = "Sincronizando...",
+                                        color = Color(0xFFFF9800), // Naranja
+                                        fontSize = 20.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                } else {
+                                    // Mostrar balance normal
+                                    Text(
+                                        text = "${NumberFormatter.formatAmount(availablePoints)} AP",
+                                        color = Color(0xFF4CAF50),
+                                        fontSize = 24.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
                             }
                             
                             Spacer(modifier = Modifier.width(24.dp))

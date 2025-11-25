@@ -55,6 +55,10 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     private val _pendingPoints = MutableStateFlow(0L)
     val pendingPoints: StateFlow<Long> = _pendingPoints.asStateFlow()
     
+    // Estado de sincronización (para mejorar UX durante sync)
+    private val _isSyncing = MutableStateFlow(false)
+    val isSyncing: StateFlow<Boolean> = _isSyncing.asStateFlow()
+    
     companion object {
         private const val PREFS_NAME = "wallet_balance_prefs"
         private const val KEY_LAST_KNOWN_REAL_BALANCE = "last_known_real_balance"
@@ -142,6 +146,14 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     }
     
     /**
+     * Marca el inicio de sincronización (llamado por VoucherRepository)
+     */
+    fun startSyncing() {
+        android.util.Log.d("WalletViewModel", "⏳ [SYNC] startSyncing() - isSyncing = true")
+        _isSyncing.value = true
+    }
+    
+    /**
      * Actualiza los totales de vouchers pendientes desde Room
      */
     private suspend fun updatePendingTotals() {
@@ -166,6 +178,9 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
             
             if (incomingDropped || outgoingDropped) {
                 android.util.Log.d("WalletViewModel", "🔄 [SYNC] Pending bajó, refrescando saldo real desde blockchain...")
+                // NUEVO: Activar flag de sincronización
+                _isSyncing.value = true
+                android.util.Log.d("WalletViewModel", "⏳ [SYNC] isSyncing = true")
                 refreshRealBalance()
             } else {
                 android.util.Log.d("WalletViewModel", "  - No hay cambios significativos en pending")
@@ -259,14 +274,22 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                     prefs.edit().putLong(KEY_LAST_KNOWN_REAL_BALANCE, newRealBalance).apply()
                     
                     updateDisplayedBalances()
+                    
+                    // NUEVO: Desactivar flag de sincronización después de actualizar balance
+                    _isSyncing.value = false
+                    android.util.Log.d("WalletViewModel", "✅ [SYNC] isSyncing = false (balance actualizado)")
                     android.util.Log.d("WalletViewModel", "✅ Saldo real actualizado: $newRealBalance AP")
                 } else {
                     android.util.Log.e("WalletViewModel", "❌ Error obteniendo saldo: ${response.code()}")
+                    // Desactivar flag incluso si hay error
+                    _isSyncing.value = false
                 }
             } catch (e: Exception) {
                 android.util.Log.e("WalletViewModel", "❌ Error llamando al backend", e)
                 // Si falla, usar último saldo conocido
                 calculateShadowBalance()
+                // Desactivar flag incluso si hay error
+                _isSyncing.value = false
             }
         }
     }

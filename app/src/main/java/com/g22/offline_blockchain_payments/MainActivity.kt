@@ -80,6 +80,7 @@ class MainActivity : ComponentActivity() {
                 
                 val availablePoints by walletViewModel.availablePoints.collectAsState()
                 val pendingPoints by walletViewModel.pendingPoints.collectAsState()
+                val isSyncing by walletViewModel.isSyncing.collectAsState()
                 
                 // ViewModel para vouchers (para el test de settle)
                 val voucherViewModel: VoucherViewModel = viewModel(
@@ -227,7 +228,8 @@ class MainActivity : ComponentActivity() {
                                 },
                                 availablePoints = availablePoints,
                                 pendingPoints = pendingPoints,
-                                walletViewModel = walletViewModel
+                                walletViewModel = walletViewModel,
+                                isSyncing = isSyncing
                             )
                         }
                         

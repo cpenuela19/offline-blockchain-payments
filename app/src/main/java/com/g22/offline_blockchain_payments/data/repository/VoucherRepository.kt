@@ -508,11 +508,12 @@ class VoucherRepository(private val context: Context) {
                             outboxDao.deleteOutboxItemById(outboxItem.id)
                             Log.d("SyncVoucher", "✅ Voucher ya existe, estado actualizado: ${voucher.id}")
                             
-                            // Limpiar pending vouchers si tenemos tx_hash
+                            // SIEMPRE limpiar pending vouchers cuando se confirma que el voucher ya fue procesado
+                            // (incluso si tx_hash no está disponible todavía)
+                            onSyncSuccess()
+                            
+                            // Actualizar nonce cacheado si tenemos tx_hash
                             if (txHash != null) {
-                                onSyncSuccess()
-                                
-                                // Actualizar nonce cacheado (voucher duplicado pero confirmado)
                                 updateNonceCacheAfterSync(settleRequest.buyer_address)
                             }
                             
@@ -632,10 +633,9 @@ class VoucherRepository(private val context: Context) {
                             outboxDao.deleteOutboxItemById(outboxItem.id)
                             Log.d("SyncVoucher", "✅ Voucher ya existe, estado actualizado: ${voucher.id}")
                             
-                            // Limpiar pending vouchers si tenemos tx_hash
-                            if (txHash != null) {
-                                onSyncSuccess()
-                            }
+                            // SIEMPRE limpiar pending vouchers cuando se confirma que el voucher ya fue procesado
+                            // (incluso si tx_hash no está disponible todavía)
+                            onSyncSuccess()
                             
                             return true
                         } else {
