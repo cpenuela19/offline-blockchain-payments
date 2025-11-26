@@ -99,6 +99,65 @@ async function getDecimals() {
   return DECIMALS_CACHE;
 }
 
+// ─────────────────────── Mutex para transferFrom() ────────────────────
+/**
+ * Mutex simple para serializar operaciones asíncronas.
+ * Asegura que solo una operación crítica se ejecute a la vez.
+ */
+class Mutex {
+  constructor() {
+    this._queue = [];
+    this._locked = false;
+  }
+
+  async acquire() {
+    return new Promise((resolve) => {
+      if (!this._locked) {
+        this._locked = true;
+        resolve();
+      } else {
+        this._queue.push(resolve);
+      }
+    });
+  }
+
+  release() {
+    if (this._queue.length > 0) {
+      const resolve = this._queue.shift();
+      resolve();
+    } else {
+      this._locked = false;
+    }
+  }
+
+  async runExclusive(callback) {
+    await this.acquire();
+    try {
+      return await callback();
+    } finally {
+      this.release();
+    }
+  }
+}
+
+// Mutex global para serializar transferFrom() y evitar conflictos de nonce
+// en la cuenta madre cuando se procesan múltiples vouchers simultáneamente
+const transferFromMutex = new Mutex();
+console.log('🔒 Mutex inicializado para transferFrom() secuencial');
+
+// Map de mutexes por usuario para serializar transacciones del mismo comprador
+// Esto asegura que transacciones offline consecutivas (nonce 0, 1, 2...) se procesen en orden
+const userMutexes = new Map();
+
+function getUserMutex(userAddress) {
+  const address = userAddress.toLowerCase();
+  if (!userMutexes.has(address)) {
+    userMutexes.set(address, new Mutex());
+    console.log(`🔒 Nuevo mutex creado para usuario: ${address}`);
+  }
+  return userMutexes.get(address);
+}
+
 // ─────────────────────────── Base de datos ────────────────────────────
 const db = new sqlite3.Database('./vouchers.db', (err) => {
   if (err) {
@@ -349,19 +408,25 @@ async function settleWithPermit(permitData, signature, seller, amount) {
     const permitReceipt = await permitTx.wait(CONFIRMATIONS);
     console.log(`[SETTLE_PERMIT] ✅ Permit confirmado en bloque: ${permitReceipt.blockNumber}`);
     
-    // Paso 2: Ejecutar transferFrom()
-    console.log('[SETTLE_PERMIT] 💸 Ejecutando transferFrom()...');
-    const transferTx = await tokenContract.transferFrom(
-      permitData.owner,
-      seller,
-      transferAmount
-    );
-    
-    console.log(`[SETTLE_PERMIT] 🔄 Transfer TX enviada: ${transferTx.hash}`);
-    console.log(`[SETTLE_PERMIT] ⏳ Esperando ${CONFIRMATIONS} confirmación(es)...`);
-    
-    const transferReceipt = await transferTx.wait(CONFIRMATIONS);
-    console.log(`[SETTLE_PERMIT] ✅ Transfer confirmado en bloque: ${transferReceipt.blockNumber}`);
+    // Paso 2: Ejecutar transferFrom() con MUTEX para evitar conflictos de nonce
+    // Esto asegura que múltiples peticiones concurrentes no intenten usar el mismo nonce
+    console.log('[SETTLE_PERMIT] 🔒 Esperando lock para transferFrom()...');
+    const { transferTx, transferReceipt } = await transferFromMutex.runExclusive(async () => {
+      console.log('[SETTLE_PERMIT] 💸 Ejecutando transferFrom()...');
+      const tx = await tokenContract.transferFrom(
+        permitData.owner,
+        seller,
+        transferAmount
+      );
+      
+      console.log(`[SETTLE_PERMIT] 🔄 Transfer TX enviada: ${tx.hash}`);
+      console.log(`[SETTLE_PERMIT] ⏳ Esperando ${CONFIRMATIONS} confirmación(es)...`);
+      
+      const receipt = await tx.wait(CONFIRMATIONS);
+      console.log(`[SETTLE_PERMIT] ✅ Transfer confirmado en bloque: ${receipt.blockNumber}`);
+      
+      return { transferTx: tx, transferReceipt: receipt };
+    });
     
     console.log('[SETTLE_PERMIT] 🎉 Settle completado exitosamente');
     
@@ -1113,12 +1178,22 @@ app.post('/v1/vouchers/settle', settleLimiter, async (req, res) => {
     console.log(`[SETTLE] 🔒 Bloqueo adquirido para: ${offer_id}`);
 
     // ═══════════════════════════════════════════════════════════════════
-    // EJECUTAR PERMIT + TRANSFERFROM
+    // EJECUTAR PERMIT + TRANSFERFROM (con mutex por usuario)
     // ═══════════════════════════════════════════════════════════════════
     
     console.log('[SETTLE] 🚀 Ejecutando settle con permit...');
     
-    const result = await settleWithPermit(permit, permit_sig, sellerLower, String(amount_ap));
+    // Obtener mutex del usuario para serializar transacciones del mismo comprador
+    // Esto asegura que transacciones offline consecutivas (nonce 0, 1, 2...) se procesen en orden
+    const buyerAddress = permit.owner;
+    const userMutex = getUserMutex(buyerAddress);
+    
+    console.log(`[SETTLE] 🔒 Esperando mutex del usuario ${buyerAddress}...`);
+    const result = await userMutex.runExclusive(async () => {
+      console.log(`[SETTLE] ✅ Mutex adquirido para usuario ${buyerAddress}`);
+      return await settleWithPermit(permit, permit_sig, sellerLower, String(amount_ap));
+    });
+    console.log(`[SETTLE] 🔓 Mutex liberado para usuario ${buyerAddress}`);
     
     console.log(`[SETTLE] ✅ Permit TX: ${result.permitTxHash}`);
     console.log(`[SETTLE] ✅ Transfer TX: ${result.transferTxHash}`);
