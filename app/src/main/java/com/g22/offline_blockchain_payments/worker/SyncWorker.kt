@@ -3,6 +3,7 @@ package com.g22.offline_blockchain_payments.worker
 import android.content.Context
 import androidx.work.*
 import com.g22.offline_blockchain_payments.data.repository.VoucherRepository
+import com.g22.offline_blockchain_payments.metrics.MetricsCollector
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -14,6 +15,9 @@ class SyncWorker(
     private val repository = VoucherRepository(context)
     
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+        // Iniciar timer para métricas
+        val startTime = System.currentTimeMillis()
+        
         try {
             val pendingItems = repository.getPendingOutboxItems()
             
@@ -31,6 +35,12 @@ class SyncWorker(
                     repository.updateOutboxItemWithBackoff(item)
                     hasFailures = true
                 }
+            }
+            
+            // Registrar tiempo de sincronización solo si fue exitosa (sin fallos)
+            if (!hasFailures) {
+                val duration = System.currentTimeMillis() - startTime
+                MetricsCollector.recordSyncTime(duration)
             }
             
             if (hasFailures) {

@@ -153,12 +153,18 @@ class VoucherRepository(private val context: Context) {
             seller_sig = sellerSig
         )
         
+        // Medir tamaño del voucher firmado (serializado a JSON)
+        val jsonString = gson.toJson(settleRequest)
+        val voucherSizeBytes = jsonString.toByteArray(Charsets.UTF_8).size
+        MetricsCollector.recordVoucherSize(voucherSizeBytes)
+        Log.d("SettleVoucher", "📊 Voucher size: ${voucherSizeBytes} bytes")
+        
         // Verificar si ya existe un outbox item con este ID (evitar duplicados)
         val existingOutbox = outboxDao.getOutboxItemById(finalOfferId)
         if (existingOutbox == null) {
             val outboxItem = OutboxEntity(
                 id = finalOfferId,
-                payload = gson.toJson(settleRequest),
+                payload = jsonString,
                 attempts = 0,
                 nextAttemptAt = System.currentTimeMillis()
             )
@@ -171,6 +177,9 @@ class VoucherRepository(private val context: Context) {
         
         // Disparar sync inmediato si hay red (usar unique work para evitar duplicados)
         SyncWorker.enqueueOneTime(context)
+        
+        // Completar timer de pago offline (el offerId es el transactionId)
+        MetricsCollector.completeOfflinePaymentTimer(finalOfferId)
         
         Log.d("SettleVoucher", "✅ Voucher con settle creado: $finalOfferId")
         

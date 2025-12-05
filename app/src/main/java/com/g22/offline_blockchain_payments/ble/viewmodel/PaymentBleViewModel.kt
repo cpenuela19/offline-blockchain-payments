@@ -8,6 +8,7 @@ import com.g22.offline_blockchain_payments.ble.model.*
 import com.g22.offline_blockchain_payments.ble.repository.BleRepository
 import com.g22.offline_blockchain_payments.ble.util.BleConstants
 import com.g22.offline_blockchain_payments.ble.util.QrGenerator
+import com.g22.offline_blockchain_payments.metrics.MetricsCollector
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.util.UUID
@@ -238,6 +239,9 @@ class PaymentBleViewModel(private val bleRepository: BleRepository) : ViewModel(
                 // Marcar que debe enviar pago cuando servicios estén listos
                 shouldSendPaymentOnConnect = true
                 
+                // Registrar intento BLE
+                MetricsCollector.recordBleAttempt(success = true)
+                
                 // Iniciar escaneo BLE
                 bleRepository.startScan(serviceUuid) { device ->
                     // Dispositivo encontrado, conectar
@@ -249,6 +253,8 @@ class PaymentBleViewModel(private val bleRepository: BleRepository) : ViewModel(
                 
             } catch (e: Exception) {
                 Log.e(TAG, "Error connecting to host", e)
+                // Registrar fallo BLE
+                MetricsCollector.recordBleAttempt(success = false)
             }
         }
     }
@@ -277,6 +283,9 @@ class PaymentBleViewModel(private val bleRepository: BleRepository) : ViewModel(
                 val transactionId = UUID.randomUUID().toString()
                 Log.d(TAG, "💎 Transaction ID generated: $transactionId")
                 
+                // Iniciar timer para métricas (usando transactionId como clave)
+                MetricsCollector.startOfflinePaymentTimer(transactionId)
+                
                 // Crear la transacción completa con el ID único
                 val transaction = PaymentTransaction(
                     transactionId = transactionId,
@@ -298,6 +307,8 @@ class PaymentBleViewModel(private val bleRepository: BleRepository) : ViewModel(
                 Log.d(TAG, "✅ Payment confirmation sent with ID: $transactionId")
             } catch (e: Exception) {
                 Log.e(TAG, "Error sending payment confirmation", e)
+                // Registrar fallo BLE
+                MetricsCollector.recordBleAttempt(success = false)
             }
         }
     }
