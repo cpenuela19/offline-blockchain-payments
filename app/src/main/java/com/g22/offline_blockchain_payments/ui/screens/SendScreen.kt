@@ -21,11 +21,14 @@ import androidx.compose.ui.unit.sp
 import com.g22.offline_blockchain_payments.ble.model.ConnectionState
 import com.g22.offline_blockchain_payments.ble.permission.PermissionManager
 import com.g22.offline_blockchain_payments.ble.viewmodel.PaymentBleViewModel
+import com.g22.offline_blockchain_payments.data.config.WalletConfig
+import com.g22.offline_blockchain_payments.data.repository.VoucherRepository
 import com.g22.offline_blockchain_payments.ui.components.NetworkStatusIndicator
 import com.g22.offline_blockchain_payments.ui.theme.*
 import com.g22.offline_blockchain_payments.ui.util.NumberFormatter
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
+import kotlinx.coroutines.launch
 
 enum class SendStep {
     SCANNING,
@@ -36,12 +39,18 @@ enum class SendStep {
 @Composable
 fun SendScreen(
     viewModel: PaymentBleViewModel,
+    walletViewModel: com.g22.offline_blockchain_payments.ui.viewmodel.WalletViewModel,
     onBack: () -> Unit,
     onPaymentSuccess: (transactionId: String, amount: Long) -> Unit
 ) {
     val context = LocalContext.current
+    val voucherRepository = remember { VoucherRepository(context) }
+    val coroutineScope = rememberCoroutineScope()
     var currentStep by remember { mutableStateOf(SendStep.SCANNING) }
     var paymentConfirmed by remember { mutableStateOf(false) }
+    
+    // Guardar datos del pago para enviar cuando BLE esté listo
+    var pendingPaymentData by remember { mutableStateOf<Triple<String, String, com.g22.offline_blockchain_payments.ui.viewmodel.WalletViewModel>?>(null) }
     
     val scannedPayload by viewModel.scannedPayload.collectAsState()
     val paymentTransaction by viewModel.paymentTransaction.collectAsState()
@@ -52,6 +61,29 @@ fun SendScreen(
     val pendingAmount by viewModel.pendingAmount.collectAsState()
     val pendingReceiverName by viewModel.pendingReceiverName.collectAsState()
     val pendingConcept by viewModel.pendingConcept.collectAsState()
+    
+    // Mensajes de error/éxito (arquitectura robusta de pagos offline)
+    val errorMessage by viewModel.errorMessage.collectAsState()
+    val successMessage by viewModel.successMessage.collectAsState()
+    
+    // Mostrar Snackbar para errores/éxito
+    val snackbarHostState = remember { SnackbarHostState() }
+    LaunchedEffect(errorMessage) {
+        errorMessage?.let {
+            snackbarHostState.showSnackbar(
+                message = it,
+                duration = SnackbarDuration.Long
+            )
+        }
+    }
+    LaunchedEffect(successMessage) {
+        successMessage?.let {
+            snackbarHostState.showSnackbar(
+                message = it,
+                duration = SnackbarDuration.Short
+            )
+        }
+    }
     
     // Scanner QR real con JourneyApps
     val scannerLauncher = rememberLauncherForActivityResult(
@@ -79,24 +111,155 @@ fun SendScreen(
         }
     }
     
-    // Navegar al recibo cuando el pago se confirma (independientemente de BLE)
-    // BLE es opcional, solo para notificar al vendedor
+    // Navegar al recibo cuando el pago se confirma y recibe sellerSig
     var hasNavigated by remember { mutableStateOf(false) }
     
-    LaunchedEffect(paymentConfirmed, paymentTransaction, connectionState, isConnected) {
-        if (paymentConfirmed && paymentTransaction != null && !hasNavigated) {
-            // Esperar un poco para intentar conectar vía BLE (opcional)
-            kotlinx.coroutines.delay(2000)
+    // Observar cuando BLE esté conectado para enviar el pago
+    // CRÍTICO: Solo ejecutar UNA VEZ usando paymentConfirmed como flag
+    LaunchedEffect(connectionState, isConnected, pendingPaymentData, paymentConfirmed) {
+        android.util.Log.d("SendScreen", "📊 LaunchedEffect: connectionState=$connectionState, isConnected=$isConnected, hasPendingData=${pendingPaymentData != null}, paymentConfirmed=$paymentConfirmed")
+        
+        // CRÍTICO: Solo ejecutar si NO se ha enviado ya el pago
+        if (connectionState is ConnectionState.Success && 
+            isConnected && 
+            pendingPaymentData != null &&
+            !paymentConfirmed) {  // ← NUEVO: Previene ejecución múltiple
+            // BLE está conectado y tenemos datos pendientes para enviar
+            android.util.Log.d("SendScreen", "🔗 BLE conectado, enviando pago (PRIMERA VEZ)...")
             
-            // Si BLE se conectó exitosamente, esperar a que se envíe el mensaje
-            if (connectionState is ConnectionState.Success && isConnected) {
-                kotlinx.coroutines.delay(1000) // Dar tiempo para enviar por BLE
+            val (buyerAddress, privateKey, walletVm) = pendingPaymentData!!
+            
+            // CRÍTICO: Marcar como confirmado ANTES de enviar para evitar re-ejecuciones
+            paymentConfirmed = true
+            pendingPaymentData = null
+            android.util.Log.d("SendScreen", "🔒 Pago marcado como confirmado para prevenir duplicados")
+            
+            // Enviar pago con arquitectura de seguridad completa
+            viewModel.sendPaymentConfirmation(
+                context = context,
+                walletViewModel = walletVm,
+                buyerAddress = buyerAddress,
+                privateKey = privateKey
+            )
+            
+            android.util.Log.d("SendScreen", "✅ sendPaymentConfirmation llamado UNA SOLA VEZ")
+        }
+    }
+    
+    // Observar cuando el vendedor envía su firma (SELLER_SIG en mensaje BLE)
+    val pendingTransaction by viewModel.pendingTransaction.collectAsState()
+    val receivedMessage by viewModel.receivedMessage.collectAsState()
+    
+    // CRÍTICO: Usar coroutineScope.launch para evitar "coroutine scope left the composition"
+    LaunchedEffect(receivedMessage, pendingTransaction) {
+        android.util.Log.d("SendScreen", "📊 [NAV] LaunchedEffect ejecutado:")
+        android.util.Log.d("SendScreen", "  - receivedMessage: ${if (receivedMessage != null) "NO NULL (${receivedMessage!!.length} chars)" else "NULL"}")
+        android.util.Log.d("SendScreen", "  - pendingTransaction: ${if (pendingTransaction != null) "NO NULL" else "NULL"}")
+        android.util.Log.d("SendScreen", "  - hasNavigated: $hasNavigated")
+        
+        if (pendingTransaction != null && receivedMessage != null && !hasNavigated) {
+            // Capturar datos INMEDIATAMENTE
+            val capturedTransaction = pendingTransaction
+            val capturedMessage = receivedMessage
+            
+            android.util.Log.d("SendScreen", "💾 [NAV] Datos capturados: ID=${capturedTransaction?.transactionId}, amount=${capturedTransaction?.amount}, msgLen=${capturedMessage?.length}")
+            
+            // Lanzar en coroutineScope que persiste entre recomposiciones
+            coroutineScope.launch {
+                try {
+                    android.util.Log.d("SendScreen", "📨 [NAV] Procesando en coroutineScope...")
+                    android.util.Log.d("SendScreen", "📨 [NAV] Primeros 100 chars: ${capturedMessage!!.take(100)}")
+                    
+                    val json = org.json.JSONObject(capturedMessage)
+                    val type = json.optString("type")
+                    android.util.Log.d("SendScreen", "📨 [NAV] JSON parseado, type='$type'")
+                    
+                    if (type == "SELLER_SIG") {
+                        val sellerSig = json.optString("signature")
+                        android.util.Log.d("SendScreen", "📝 [NAV] ✅ SELLER_SIG detectado! Firma: ${sellerSig.take(20)}...")
+                        
+                        // Validar que la firma no esté vacía
+                        if (sellerSig.isEmpty() || sellerSig.length < 100) {
+                            android.util.Log.e("SendScreen", "❌ [NAV] SELLER_SIG inválido o vacío (length=${sellerSig.length})")
+                            return@launch
+                        }
+                        
+                        // Marcar como navegado ANTES de llamar a handleSellerSignature
+                        hasNavigated = true
+                        android.util.Log.d("SendScreen", "🔒 [NAV] hasNavigated = true")
+                        
+                        // Completar voucher
+                        android.util.Log.d("SendScreen", "📝 [NAV] Llamando handleSellerSignature...")
+                        viewModel.handleSellerSignature(
+                            context = context,
+                            sellerSig = sellerSig,
+                            voucherRepository = voucherRepository,
+                            walletViewModel = walletViewModel
+                        )
+                        
+                        android.util.Log.d("SendScreen", "✅ [NAV] handleSellerSignature completado")
+                        
+                        // Pequeño delay para asegurar que el voucher se guardó
+                        kotlinx.coroutines.delay(300)
+                        
+                        // Navegar usando los datos capturados
+                        if (capturedTransaction != null) {
+                            android.util.Log.d("SendScreen", "🎯 [NAV] Navegando: ID=${capturedTransaction.transactionId}, amount=${capturedTransaction.amount}")
+                            onPaymentSuccess(capturedTransaction.transactionId, capturedTransaction.amount)
+                            android.util.Log.d("SendScreen", "✅ [NAV] Navegación completada")
+                        } else {
+                            android.util.Log.e("SendScreen", "❌ [NAV] capturedTransaction es NULL")
+                        }
+                    } else {
+                        android.util.Log.w("SendScreen", "⚠️ [NAV] type no es SELLER_SIG: '$type'")
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("SendScreen", "❌ [NAV] Error en coroutineScope: ${e.message}")
+                    android.util.Log.e("SendScreen", "❌ [NAV] Stack: ${e.stackTraceToString()}")
+                }
             }
-            
-            // Navegar al recibo (el voucher ya se creó cuando se confirmó)
-            paymentTransaction?.let { tx ->
-                hasNavigated = true
-                onPaymentSuccess(tx.transactionId, tx.amount)
+        } else {
+            android.util.Log.d("SendScreen", "⏭️ [NAV] Condiciones no cumplidas")
+        }
+    }
+    
+    // Timeout para conexión BLE: Si no conecta en 30 segundos, cancelar
+    LaunchedEffect(currentStep) {
+        if (currentStep == SendStep.CONNECTING) {
+            android.util.Log.d("SendScreen", "⏱️ Iniciando timeout de 30 segundos para conexión BLE")
+            kotlinx.coroutines.delay(30000) // Esperar 30 segundos
+            if (currentStep == SendStep.CONNECTING && !paymentConfirmed) {
+                // Timeout de conexión
+                android.util.Log.e("SendScreen", "⏰ TIMEOUT: No se completó el pago en 30 segundos")
+                android.util.Log.e("SendScreen", "⏰ connectionState=$connectionState, isConnected=$isConnected")
+                coroutineScope.launch {
+                    snackbarHostState.showSnackbar(
+                        message = "No se pudo conectar al vendedor. Tiempo agotado.",
+                        duration = SnackbarDuration.Long
+                    )
+                }
+                viewModel.disconnect() // Desconectar BLE
+                pendingPaymentData = null
+                currentStep = SendStep.SCANNING
+            } else {
+                android.util.Log.d("SendScreen", "✅ Pago completado antes del timeout")
+            }
+        }
+    }
+    
+    // Fallback: Si no llega sellerSig en 70 segundos total, volver (el rollback ya se ejecutó en sendPaymentConfirmation)
+    LaunchedEffect(paymentConfirmed) {
+        if (paymentConfirmed && !hasNavigated) {
+            kotlinx.coroutines.delay(70000) // Esperar 70 segundos (15 conexión + 60 timeout pago - 5 margen)
+            if (!hasNavigated) {
+                // Si no navegó después de todo este tiempo, hay un problema
+                android.util.Log.w("SendScreen", "⚠️ Pago no completado después de 70s")
+                if (errorMessage != null) {
+                    // Si hay error, volver a scanning
+                    currentStep = SendStep.SCANNING
+                    paymentConfirmed = false
+                    pendingPaymentData = null
+                }
             }
         }
     }
@@ -104,7 +267,9 @@ fun SendScreen(
     // Limpiar al salir
     DisposableEffect(Unit) {
         onDispose {
+            android.util.Log.w("SendScreen", "⚠️ [DISPOSE] onDispose ejecutado! isConnected=$isConnected, paymentConfirmed=$paymentConfirmed, hasNavigated=$hasNavigated")
             if (isConnected) {
+                android.util.Log.w("SendScreen", "🔌 [DISPOSE] Desconectando BLE...")
                 viewModel.disconnect()
             }
         }
@@ -115,6 +280,13 @@ fun SendScreen(
             .fillMaxSize()
             .background(DarkNavy)
     ) {
+        // SnackbarHost para mostrar errores
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(16.dp)
+        )
         when (currentStep) {
             SendStep.SCANNING -> ScanQRView(
                 onScanClick = {
@@ -138,31 +310,75 @@ fun SendScreen(
             pendingReceiverName = pendingReceiverName,
             pendingConcept = pendingConcept,
             onConfirm = {
-                // Generar transactionId y crear PaymentTransaction inmediatamente
-                val transactionId = java.util.UUID.randomUUID().toString()
+                android.util.Log.d("SendScreen", "🔘 Botón CONFIRMAR presionado")
+                
+                // ARQUITECTURA ROBUSTA: Pago atómico con descuento de shadow balance y timeout
                 val payload = scannedPayload
-                if (payload != null) {
-                    val tx = com.g22.offline_blockchain_payments.ble.model.PaymentTransaction(
-                        transactionId = transactionId,
-                        amount = pendingAmount,
-                        senderName = "Juan P.", // TODO: Obtener de perfil
-                        receiverName = pendingReceiverName,
-                        concept = pendingConcept ?: "Pago offline",
-                        sessionId = payload.sessionId
-                    )
-                    // Guardar en el ViewModel
-                    viewModel.setPaymentTransaction(tx)
-                    paymentConfirmed = true
+                android.util.Log.d("SendScreen", "📦 Payload: ${if (payload != null) "OK" else "NULL"}")
+                
+                if (payload == null) {
+                    android.util.Log.e("SendScreen", "❌ ERROR: payload es null")
+                    return@ConfirmationView
+                }
+                
+                android.util.Log.d("SendScreen", "💰 Verificando saldo: $pendingAmount AP")
+                
+                // Verificar shadow balance ANTES de proceder
+                val canSpend = walletViewModel.canSpend(pendingAmount)
+                android.util.Log.d("SendScreen", "💰 canSpend: $canSpend")
+                
+                if (!canSpend) {
+                    // Mostrar error: saldo insuficiente
+                    android.util.Log.e("SendScreen", "❌ SALDO INSUFICIENTE")
+                    coroutineScope.launch {
+                        snackbarHostState.showSnackbar(
+                            message = "Saldo insuficiente para realizar el pago",
+                            duration = SnackbarDuration.Long
+                        )
+                    }
+                    return@ConfirmationView
+                }
+                
+                android.util.Log.d("SendScreen", "✅ Saldo OK, continuando...")
+                
+                // Obtener address y privateKey del wallet
+                // (se desbloqueará automáticamente si es necesario)
+                try {
+                    android.util.Log.d("SendScreen", "🔑 Obteniendo credenciales...")
+                    val buyerAddress = WalletConfig.getCurrentAddress(context)
+                    android.util.Log.d("SendScreen", "📍 BuyerAddress: $buyerAddress")
                     
-                    // Crear voucher inmediatamente (offline) - esto se hace en MainActivity.onPaymentSuccess
-                    // No llamar onPaymentSuccess aquí, se llamará desde LaunchedEffect
+                    android.util.Log.d("SendScreen", "🔓 Obteniendo privateKey (auto-unlock si es necesario)...")
+                    val privateKey = WalletConfig.getCurrentPrivateKey(context)
+                    android.util.Log.d("SendScreen", "🔐 PrivateKey obtenida (length: ${privateKey.length})")
                     
-                    // Intentar conectar vía BLE (opcional, para notificar al vendedor)
-                    viewModel.connectToHost("Juan P.")
+                    android.util.Log.d("SendScreen", "🔄 Preparando pago: buyer=$buyerAddress")
+                    
+                    // Guardar datos del pago para enviar cuando BLE esté listo
+                    pendingPaymentData = Triple(buyerAddress, privateKey, walletViewModel)
+                    android.util.Log.d("SendScreen", "💾 Datos guardados en pendingPaymentData")
+                    
+                    // Conectar a BLE - el pago se enviará automáticamente cuando esté conectado
+                    android.util.Log.d("SendScreen", "📡 Llamando connectToHost...")
+                    viewModel.connectToHost("Juan P.") // TODO: Obtener de perfil
+                    
+                    android.util.Log.d("SendScreen", "🔄 Cambiando a SendStep.CONNECTING...")
                     currentStep = SendStep.CONNECTING
+                    android.util.Log.d("SendScreen", "✅ currentStep cambiado a CONNECTING")
+                    
+                } catch (e: Exception) {
+                    android.util.Log.e("SendScreen", "❌ EXCEPCIÓN: ${e.message}", e)
+                    e.printStackTrace()
+                    coroutineScope.launch {
+                        snackbarHostState.showSnackbar(
+                            message = "Error: ${e.message}",
+                            duration = SnackbarDuration.Long
+                        )
+                    }
                 }
             },
             onCancel = {
+                android.util.Log.w("SendScreen", "❌ [CANCEL] Usuario presionó Cancelar en SCANNING")
                 viewModel.disconnect()
                 currentStep = SendStep.SCANNING
             }
@@ -172,6 +388,7 @@ fun SendScreen(
                 connectionState = connectionState,
                 paymentTransaction = paymentTransaction,
                 onCancel = {
+                    android.util.Log.w("SendScreen", "❌ [CANCEL] Usuario presionó Cancelar en CONNECTING")
                     viewModel.disconnect()
                     onBack()
                 }

@@ -27,7 +27,16 @@ data class VoucherEntity(
     val buyerAddress: String? = null,    // Dirección del comprador
     val sellerAddress: String? = null,   // Dirección del vendedor
     val buyerSig: String? = null,        // Firma del comprador
-    val sellerSig: String? = null         // Firma del vendedor
+    val sellerSig: String? = null,       // Firma del vendedor
+    // NUEVOS: Datos de permit EIP-2612
+    val permitOwner: String? = null,
+    val permitSpender: String? = null,
+    val permitValue: String? = null,
+    val permitNonce: Long? = null,
+    val permitDeadline: Long? = null,
+    val permitV: Int? = null,
+    val permitR: String? = null,
+    val permitS: String? = null
 )
 
 class VoucherTypeConverters {

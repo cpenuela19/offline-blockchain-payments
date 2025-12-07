@@ -9,10 +9,12 @@
         <domain includeSubdomains="true">127.0.0.1</domain>
         <!-- IPs de red local (para dispositivos físicos) -->
         <!-- Agrega aquí la IP de tu máquina si es diferente -->
+        <domain includeSubdomains="true">192.168.10.4</domain>
         <domain includeSubdomains="true">192.168.0.9</domain>
         <domain includeSubdomains="true">192.168.0.15</domain>
         <domain includeSubdomains="true">192.168.0.0</domain>
         <domain includeSubdomains="true">192.168.1.0</domain>
+        <domain includeSubdomains="true">192.168.10.0</domain>
         <domain includeSubdomains="true">10.0.0.0</domain>
     </domain-config>
     

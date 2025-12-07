@@ -14,18 +14,22 @@ import com.g22.offline_blockchain_payments.data.wallet.WalletManager
 object WalletConfig {
 
     /**
-     * Obtiene la clave privada actual del wallet desbloqueado.
+     * Obtiene la clave privada actual del wallet.
+     * Si el wallet está bloqueado, lo desbloquea automáticamente.
+     * 
+     * NOTA: Esta función puede pedir autenticación biométrica si está configurada
+     * en Android Keystore.
      * 
      * @param context Context de Android (necesario para obtener el wallet)
      * @return Clave privada en formato hexadecimal con prefijo 0x
-     * @throws IllegalStateException Si el wallet no está desbloqueado
+     * @throws Exception Si falla el desbloqueo o no existe wallet
      */
     fun getCurrentPrivateKey(context: Context): String {
+        // Si no está desbloqueado, desbloquear automáticamente
         if (!WalletManager.isWalletUnlocked()) {
-            throw IllegalStateException(
-                "Wallet no está desbloqueado. " +
-                "Por favor, desbloquea el wallet antes de realizar operaciones."
-            )
+            android.util.Log.d("WalletConfig", "🔓 Wallet bloqueado, desbloqueando automáticamente...")
+            WalletManager.unlockWallet(context)
+            android.util.Log.d("WalletConfig", "✅ Wallet desbloqueado exitosamente")
         }
         return WalletManager.getUnlockedPrivateKey()
     }

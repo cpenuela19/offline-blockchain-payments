@@ -36,9 +36,31 @@ interface PendingVoucherDao {
     suspend fun markAsSynced(id: Long)
     
     /**
+     * Obtiene todos los vouchers pendientes (sin Flow, para procesamiento)
+     */
+    @Query("SELECT * FROM pending_vouchers WHERE synced = 0")
+    suspend fun getAllPendingList(): List<PendingVoucherEntity>
+    
+    /**
      * Elimina todos los vouchers sincronizados (limpieza)
+     * @return Número de filas eliminadas
      */
     @Query("DELETE FROM pending_vouchers WHERE synced = 1")
-    suspend fun deleteSynced()
+    suspend fun deleteSynced(): Int
+    
+    /**
+     * Elimina el último voucher outgoing pendiente (usado para rollback)
+     * Elimina el más reciente que coincida con el monto
+     */
+    @Query("DELETE FROM pending_vouchers WHERE id = (SELECT id FROM pending_vouchers WHERE type = 'outgoing' AND amountAp = :amountAp AND synced = 0 ORDER BY timestamp DESC LIMIT 1)")
+    suspend fun deleteLastOutgoingPending(amountAp: Long)
+    
+    /**
+     * Elimina TODOS los vouchers outgoing pendientes no sincronizados.
+     * Se usa cuando el balance real desde blockchain refleja que las transacciones ya se confirmaron.
+     * @return Número de filas eliminadas
+     */
+    @Query("DELETE FROM pending_vouchers WHERE type = 'outgoing' AND synced = 0")
+    suspend fun deleteAllOutgoingPending(): Int
 }
 

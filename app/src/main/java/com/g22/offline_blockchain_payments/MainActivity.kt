@@ -28,6 +28,8 @@ import com.g22.offline_blockchain_payments.ui.viewmodel.WalletSetupViewModel
 import com.g22.offline_blockchain_payments.ui.viewmodel.WalletUnlockViewModel
 import com.g22.offline_blockchain_payments.data.wallet.WalletManager
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Alignment
@@ -39,6 +41,7 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
     private lateinit var bleRepository: BleRepository
     private lateinit var paymentBleViewModel: PaymentBleViewModel
+    private var walletViewModelRef: WalletViewModel? = null
     
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -49,6 +52,14 @@ class MainActivity : ComponentActivity() {
         
         // Inicializar SyncWorker
         SyncWorker.enqueue(this)
+        
+        // Observar lifecycle para refrescar balance cuando la app vuelve del background
+        lifecycle.addObserver(LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                // App vuelve del background - refrescar balance real
+                walletViewModelRef?.refreshRealBalance()
+            }
+        })
         
         setContent {
             OfflineblockchainpaymentsTheme {
@@ -64,8 +75,12 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 )
+                // Guardar referencia para lifecycle observer
+                walletViewModelRef = walletViewModel
+                
                 val availablePoints by walletViewModel.availablePoints.collectAsState()
                 val pendingPoints by walletViewModel.pendingPoints.collectAsState()
+                val isSyncing by walletViewModel.isSyncing.collectAsState()
                 
                 // ViewModel para vouchers (para el test de settle)
                 val voucherViewModel: VoucherViewModel = viewModel(
@@ -212,7 +227,9 @@ class MainActivity : ComponentActivity() {
                                     navController.navigate("buyer/start")
                                 },
                                 availablePoints = availablePoints,
-                                pendingPoints = pendingPoints
+                                pendingPoints = pendingPoints,
+                                walletViewModel = walletViewModel,
+                                isSyncing = isSyncing
                             )
                         }
                         
@@ -239,25 +256,19 @@ class MainActivity : ComponentActivity() {
                         composable("buyer/start") {
                             SendScreen(
                                 viewModel = paymentBleViewModel,
+                                walletViewModel = walletViewModel,
                                 onBack = {
                                     navController.popBackStack()
                                 },
                                 onPaymentSuccess = { transactionId, amount ->
-                                    // Guardar datos reales de la transacción
+                                    // IMPORTANTE: SendScreen ya hace TODO:
+                                    // - Descuenta puntos (en sendPaymentConfirmation) ✅
+                                    // - Crea voucher (en handleSellerSignature) ✅
+                                    // - Incrementa nonce (en handleSellerSignature) ✅
+                                    // Solo necesitamos guardar datos para la UI y navegar
+                                    
                                     currentTransactionId = paymentBleViewModel.currentTransactionId.value ?: transactionId
                                     buyerAmount = amount
-                                    
-                                    // Crear voucher con settle (offline con firmas)
-                                    val paymentTx = paymentBleViewModel.paymentTransaction.value
-                                    voucherViewModel.createSettledVoucher(
-                                        role = com.g22.offline_blockchain_payments.ui.data.Role.BUYER,
-                                        amountAp = amount,
-                                        counterparty = paymentTx?.receiverName ?: "Vendedor",
-                                        offerId = transactionId
-                                    )
-                                    
-                                    // Descontar puntos del comprador
-                                    walletViewModel.deductPoints(amount)
                                     
                                     navController.navigate("buyer/receipt")
                                 }
@@ -313,21 +324,16 @@ class MainActivity : ComponentActivity() {
                                 },
                                 onPaymentReceived = { amount, transactionId ->
                                     android.util.Log.d("MainActivity", "🎯 onPaymentReceived called: amount=$amount, transactionId=$transactionId")
-                                    // Guardar datos reales de la transacción
+                                    
+                                    // IMPORTANTE: ReceiveScreen ya hace TODO:
+                                    // - Verifica firma del comprador ✅
+                                    // - Firma como vendedor ✅
+                                    // - Suma pending points (en verifyAndSignAsSeller) ✅
+                                    // - Crea voucher con createSettledVoucherWithAddresses ✅
+                                    // Solo necesitamos guardar datos para la UI y navegar
+                                    
                                     currentTransactionId = paymentBleViewModel.currentTransactionId.value ?: transactionId
                                     sellerAmount = amount
-                                    
-                                    // Crear voucher con settle (offline con firmas)
-                                    val paymentTx = paymentBleViewModel.paymentTransaction.value
-                                    voucherViewModel.createSettledVoucher(
-                                        role = com.g22.offline_blockchain_payments.ui.data.Role.SELLER,
-                                        amountAp = amount,
-                                        counterparty = paymentTx?.senderName ?: "Comprador",
-                                        offerId = transactionId
-                                    )
-                                    
-                                    // Agregar puntos pendientes al vendedor
-                                    walletViewModel.addPendingPoints(amount)
                                     
                                     android.util.Log.d("MainActivity", "📱 Navigating to seller/receipt...")
                                     navController.navigate("seller/receipt")
