@@ -1,15 +1,14 @@
+# PROYECTO DE GRADO - ISIS3007
+Desarrollado por:
+Santiago Andres Osorio Osorio - s.osorioo@uniandes.edu.co
+Carlos Enrique Peñuela Mejia ' ce.penuela20@uniandes.edu.co
+
+### Para probar el proyecto
 Desde o/ffline-blockchain-payments/backend 
 npm run dev
 
+Requisitos:
+Descargar la aplicacion usando el codigo fuente y usando el idle de android studio
+tener el back en ejecucion.
 
-Desde otra terminal (ejemplo de una peticion)
-TS=$(date +%s)
-curl -X POST http://localhost:3000/v1/vouchers \
-  -H "Content-Type: application/json" \
-  -d '{
-    "offer_id":"test-fallback-1",
-    "amount_ap":100,
-    "buyer_alias":"Juan",
-    "seller_alias":"0x8846f77a51371269a9e84310cc978154adbf7cf8",
-    "created_at":'$TS'
-  }'
+Flujo para probar: (abordar, si no sabes haz la pregunta a cursor, NO INVENTES)
