@@ -2,6 +2,33 @@
 
 Backend Node.js para gestionar vouchers y transferencias de tokens ERC-20 AgroPuntos.
 
+## 🔐 Modelo de Seguridad: TRUE SELF-CUSTODY
+
+Este backend implementa el modelo **"True Self-Custody"** siguiendo las mejores prácticas de blockchain:
+
+### ✅ Principios de Seguridad
+
+- ✅ **La app genera las 10 palabras localmente** usando `SecureRandom`
+- ✅ **La app deriva la clave privada localmente** usando PBKDF2 (100,000 iteraciones)
+- ✅ **El backend NUNCA conoce las palabras** ni la clave privada
+- ✅ **El backend SOLO almacena datos públicos**: `address`, `public_key`
+- ✅ **"Not your keys, not your coins"** - Usuario tiene custodia completa
+
+### ⚠️ Endpoints Eliminados por Seguridad
+
+Los siguientes endpoints están **DEPRECADOS** y devuelven `410 Gone`:
+
+- ❌ `POST /wallet/create` - Backend YA NO genera wallets
+- ❌ `POST /auth/login-via-phrase` - Backend YA NO recibe frases
+- ❌ `GET /wallet/private-key` - Backend NUNCA debe enviar claves privadas
+- ❌ `POST /wallet/identity-debug` - Endpoint MUY PELIGROSO eliminado
+
+### ✅ Nuevos Endpoints Seguros
+
+- ✅ `POST /wallet/register` - Registra wallet (solo `address` + `public_key`)
+- ✅ `GET /wallet/info?address=0x...` - Obtiene info de wallet para restauración
+- ✅ `POST /wallet/login` - Login con `address` (genera nuevo session token)
+
 ## Requisitos
 
 - Node.js 18+

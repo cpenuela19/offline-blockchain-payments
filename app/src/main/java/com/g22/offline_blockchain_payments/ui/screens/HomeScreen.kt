@@ -31,8 +31,9 @@ fun HomeScreen(
     onReceiveClick: () -> Unit = {},
     onSwapClick: () -> Unit = {},
     onHistoryClick: () -> Unit = {},
-    availablePoints: Long = 58200,
-    pendingPoints: Long = 20000
+    availablePoints: Long = 1000,  // Default para Preview (1000 AP inicial)
+    pendingPoints: Long = 0,        // Default para Preview (sin pendientes)
+    isSyncing: Boolean = false
 ) {
     Box(
         modifier = Modifier
@@ -111,12 +112,23 @@ fun HomeScreen(
                         fontWeight = FontWeight.Medium
                     )
                     Spacer(modifier = Modifier.height(12.dp))
-                    Text(
-                        text = "${NumberFormatter.formatAmount(availablePoints)} AP",
-                        color = Color(0xFF4CAF50),
-                        fontSize = 56.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    if (isSyncing) {
+                        // Mostrar indicador de sincronización
+                        Text(
+                            text = "Sincronizando...",
+                            color = Color(0xFFFF9800), // Naranja
+                            fontSize = 32.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    } else {
+                        // Mostrar balance normal
+                        Text(
+                            text = "${NumberFormatter.formatAmount(availablePoints)} AP",
+                            color = Color(0xFF4CAF50),
+                            fontSize = 56.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
             }
             

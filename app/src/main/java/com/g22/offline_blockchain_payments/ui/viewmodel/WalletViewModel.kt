@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.first
  */
 class WalletViewModel(application: Application) : AndroidViewModel(application) {
     
+    private val database: AppDatabase
     private val repository: PendingBalanceRepository
     private val prefs: SharedPreferences
     
@@ -54,6 +55,10 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     private val _pendingPoints = MutableStateFlow(0L)
     val pendingPoints: StateFlow<Long> = _pendingPoints.asStateFlow()
     
+    // Estado de sincronización (para mejorar UX durante sync)
+    private val _isSyncing = MutableStateFlow(false)
+    val isSyncing: StateFlow<Boolean> = _isSyncing.asStateFlow()
+    
     companion object {
         private const val PREFS_NAME = "wallet_balance_prefs"
         private const val KEY_LAST_KNOWN_REAL_BALANCE = "last_known_real_balance"
@@ -61,7 +66,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     
     init {
         prefs = application.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val database = AppDatabase.getDatabase(application)
+        database = AppDatabase.getDatabase(application)
         repository = PendingBalanceRepository(database)
         
         // Cargar último saldo conocido
@@ -123,24 +128,68 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     
     /**
      * Calcula el shadow balance usando la fórmula:
-     * shadow_balance = real_balance - outgoingPending + incomingPending
+     * shadow_balance = real_balance - outgoingPending
+     * 
+     * NOTA: incomingPending NO se suma al disponible.
+     * Se muestra por separado como "pendiente" hasta que se confirme en blockchain.
      * 
      * Este valor se usa únicamente cuando la app está offline.
      */
     fun computeShadowBalance(
         realBalance: Long,
         outgoingPending: Long,
-        incomingPending: Long
+        incomingPending: Long  // No se usa, pero se mantiene por compatibilidad
     ): Long {
-        return realBalance - outgoingPending + incomingPending
+        // FIX: No sumar incomingPending para evitar doble contabilización
+        // El incoming se muestra por separado en _pendingPoints
+        return realBalance - outgoingPending
+    }
+    
+    /**
+     * Marca el inicio de sincronización (llamado por VoucherRepository)
+     */
+    fun startSyncing() {
+        android.util.Log.d("WalletViewModel", "⏳ [SYNC] startSyncing() - isSyncing = true")
+        _isSyncing.value = true
     }
     
     /**
      * Actualiza los totales de vouchers pendientes desde Room
      */
     private suspend fun updatePendingTotals() {
+        val oldIncoming = _incomingPending.value
+        val oldOutgoing = _outgoingPending.value
+        
+        android.util.Log.d("WalletViewModel", "🔄 [PENDING] updatePendingTotals llamado")
+        android.util.Log.d("WalletViewModel", "  - OLD incoming: $oldIncoming, outgoing: $oldOutgoing")
+        
         _incomingPending.value = repository.getTotalIncomingPending()
         _outgoingPending.value = repository.getTotalOutgoingPending()
+        
+        android.util.Log.d("WalletViewModel", "  - NEW incoming: ${_incomingPending.value}, outgoing: ${_outgoingPending.value}")
+        
+        // Si los pending bajaron significativamente, probablemente se sincronizaron
+        // → Actualizar saldo real desde blockchain
+        if (_isOnline.value) {
+            val incomingDropped = oldIncoming > 0 && _incomingPending.value < oldIncoming
+            val outgoingDropped = oldOutgoing > 0 && _outgoingPending.value < oldOutgoing
+            
+            android.util.Log.d("WalletViewModel", "  - incomingDropped: $incomingDropped, outgoingDropped: $outgoingDropped")
+            
+            if (incomingDropped || outgoingDropped) {
+                android.util.Log.d("WalletViewModel", "🔄 [SYNC] Pending bajó, refrescando saldo real desde blockchain...")
+                // NUEVO: Activar flag de sincronización
+                _isSyncing.value = true
+                android.util.Log.d("WalletViewModel", "⏳ [SYNC] isSyncing = true")
+                refreshRealBalance()
+            } else {
+                android.util.Log.d("WalletViewModel", "  - No hay cambios significativos en pending")
+            }
+        } else {
+            android.util.Log.d("WalletViewModel", "  - Offline, no refrescando balance real")
+            // Offline: recalcular shadow balance con los nuevos pending
+            calculateShadowBalance()
+        }
     }
     
     /**
@@ -160,14 +209,23 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
      * Actualiza los saldos mostrados en la UI
      */
     private fun updateDisplayedBalances() {
+        android.util.Log.d("WalletViewModel", "🔄 [UI] updateDisplayedBalances llamado")
+        android.util.Log.d("WalletViewModel", "  - isOnline: ${_isOnline.value}")
+        android.util.Log.d("WalletViewModel", "  - realBalance: ${_realBalance.value}")
+        android.util.Log.d("WalletViewModel", "  - shadowBalance: ${_shadowBalance.value}")
+        android.util.Log.d("WalletViewModel", "  - incomingPending: ${_incomingPending.value}")
+        android.util.Log.d("WalletViewModel", "  - outgoingPending: ${_outgoingPending.value}")
+        
         if (_isOnline.value) {
             // Online: mostrar saldo real y pendientes incoming
             _availablePoints.value = _realBalance.value
             _pendingPoints.value = _incomingPending.value
+            android.util.Log.d("WalletViewModel", "📊 [UI] ONLINE → availablePoints=${_availablePoints.value}, pendingPoints=${_pendingPoints.value}")
         } else {
             // Offline: mostrar shadow balance y pendientes incoming
             _availablePoints.value = _shadowBalance.value
             _pendingPoints.value = _incomingPending.value
+            android.util.Log.d("WalletViewModel", "📊 [UI] OFFLINE → availablePoints=${_availablePoints.value}, pendingPoints=${_pendingPoints.value}")
         }
     }
     
@@ -185,24 +243,53 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
             }
             
             try {
+                // Guardar balance anterior para comparación
+                val oldRealBalance = _realBalance.value
+                val oldOutgoingPending = _outgoingPending.value
+                
                 val response = ApiClient.apiService.getWalletBalance(address)
                 if (response.isSuccessful && response.body() != null) {
-                    val balance = response.body()!!.balance_ap
-                    _realBalance.value = balance
-                    _lastKnownRealBalance.value = balance
+                    val newRealBalance = response.body()!!.balance_ap
+                    
+                    android.util.Log.d("WalletViewModel", "🔄 [REFRESH] Balance actualizado: $oldRealBalance → $newRealBalance")
+                    android.util.Log.d("WalletViewModel", "🔄 [REFRESH] outgoingPending actual: $oldOutgoingPending AP")
+                    
+                    // CRÍTICO: Si el balance real CAMBIÓ Y hay outgoingPending > 0, 
+                    // significa que transacciones se confirmaron en blockchain
+                    // Por lo tanto, debemos limpiar los outgoingPending para evitar doble deducción
+                    // Esto aplica tanto cuando el balance BAJA (por envíos) como cuando SUBE (por recibos)
+                    if (newRealBalance != oldRealBalance && oldOutgoingPending > 0) {
+                        android.util.Log.d("WalletViewModel", "🧹 [REFRESH] Balance cambió de $oldRealBalance a $newRealBalance → limpiando outgoingPending ($oldOutgoingPending AP)")
+                        val deletedCount = repository.deleteAllOutgoingPending()
+                        android.util.Log.d("WalletViewModel", "✅ [REFRESH] Limpiados $deletedCount outgoing pending vouchers")
+                        
+                        // Actualizar totales de pending
+                        updatePendingTotals()
+                    }
+                    
+                    _realBalance.value = newRealBalance
+                    _lastKnownRealBalance.value = newRealBalance
                     
                     // Guardar en SharedPreferences
-                    prefs.edit().putLong(KEY_LAST_KNOWN_REAL_BALANCE, balance).apply()
+                    prefs.edit().putLong(KEY_LAST_KNOWN_REAL_BALANCE, newRealBalance).apply()
                     
                     updateDisplayedBalances()
-                    android.util.Log.d("WalletViewModel", "✅ Saldo real actualizado: $balance AP")
+                    
+                    // NUEVO: Desactivar flag de sincronización después de actualizar balance
+                    _isSyncing.value = false
+                    android.util.Log.d("WalletViewModel", "✅ [SYNC] isSyncing = false (balance actualizado)")
+                    android.util.Log.d("WalletViewModel", "✅ Saldo real actualizado: $newRealBalance AP")
                 } else {
                     android.util.Log.e("WalletViewModel", "❌ Error obteniendo saldo: ${response.code()}")
+                    // Desactivar flag incluso si hay error
+                    _isSyncing.value = false
                 }
             } catch (e: Exception) {
                 android.util.Log.e("WalletViewModel", "❌ Error llamando al backend", e)
                 // Si falla, usar último saldo conocido
                 calculateShadowBalance()
+                // Desactivar flag incluso si hay error
+                _isSyncing.value = false
             }
         }
     }
@@ -211,22 +298,28 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
      * Agrega un voucher outgoing (cuando el usuario envía)
      */
     suspend fun addOutgoingPending(amountAp: Long) {
+        android.util.Log.d("WalletViewModel", "➖ [PENDING] addOutgoingPending($amountAp)")
         repository.insertPending("outgoing", amountAp)
+        android.util.Log.d("WalletViewModel", "➖ [PENDING] Outgoing insertado en DB")
         updatePendingTotals()
         if (!_isOnline.value) {
             calculateShadowBalance()
         }
+        android.util.Log.d("WalletViewModel", "➖ [PENDING] Nueva outgoingPending total: ${_outgoingPending.value}")
     }
     
     /**
      * Agrega un voucher incoming (cuando el usuario recibe)
      */
     suspend fun addIncomingPending(amountAp: Long) {
+        android.util.Log.d("WalletViewModel", "➕ [PENDING] addIncomingPending($amountAp)")
         repository.insertPending("incoming", amountAp)
+        android.util.Log.d("WalletViewModel", "➕ [PENDING] Incoming insertado en DB")
         updatePendingTotals()
         if (!_isOnline.value) {
             calculateShadowBalance()
         }
+        android.util.Log.d("WalletViewModel", "➕ [PENDING] Nueva incomingPending total: ${_incomingPending.value}")
     }
     
     /**
@@ -245,18 +338,26 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
      * En offline, actualiza el shadow balance
      */
     fun deductPoints(amount: Long): Boolean {
+        android.util.Log.d("WalletViewModel", "💸 [DEDUCT] deductPoints($amount) llamado")
+        android.util.Log.d("WalletViewModel", "💸 [DEDUCT] canSpend($amount) = ${canSpend(amount)}")
+        android.util.Log.d("WalletViewModel", "💸 [DEDUCT] isOnline = ${_isOnline.value}")
+        
         return if (canSpend(amount)) {
             viewModelScope.launch {
                 if (_isOnline.value) {
                     // Online: actualizar saldo real
+                    android.util.Log.d("WalletViewModel", "💸 [DEDUCT] ONLINE: Refrescando saldo real")
                     refreshRealBalance()
                 } else {
                     // Offline: agregar a outgoing y recalcular shadow
+                    android.util.Log.d("WalletViewModel", "💸 [DEDUCT] OFFLINE: Agregando a outgoing pending")
                     addOutgoingPending(amount)
                 }
             }
+            android.util.Log.d("WalletViewModel", "💸 [DEDUCT] Retornando TRUE")
             true
         } else {
+            android.util.Log.d("WalletViewModel", "💸 [DEDUCT] Retornando FALSE (saldo insuficiente)")
             false // No hay suficientes puntos
         }
     }
@@ -267,6 +368,38 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     fun addPendingPoints(amount: Long) {
         viewModelScope.launch {
             addIncomingPending(amount)
+        }
+    }
+    
+    /**
+     * Revierte un descuento previo (rollback después de error)
+     * A diferencia de addPendingPoints(), esto NO crea pending, solo revierte el outgoing
+     */
+    fun rollbackDeduction(amount: Long) {
+        viewModelScope.launch {
+            // Buscar y eliminar el outgoing pending correspondiente
+            val pendingDao = database.pendingVoucherDao()
+            val allOutgoing = pendingDao.getAllPendingList().filter { it.type == "outgoing" }
+            
+            // Encontrar el pending más reciente con este monto
+            val toRemove = allOutgoing.lastOrNull { it.amountAp == amount }
+            
+            if (toRemove != null) {
+                // Marcar como sincronizado para que se elimine
+                pendingDao.markAsSynced(toRemove.id)
+                repository.deleteSynced()
+                updatePendingTotals()
+                android.util.Log.d("WalletViewModel", "✅ Rollback: Outgoing de $amount AP eliminado")
+            } else {
+                android.util.Log.w("WalletViewModel", "⚠️ Rollback: No se encontró outgoing de $amount AP")
+            }
+            
+            // Recalcular shadow balance
+            if (!_isOnline.value) {
+                calculateShadowBalance()
+            } else {
+                refreshRealBalance()
+            }
         }
     }
     
@@ -284,6 +417,35 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
             
             // Después de sincronizar, actualizar pendientes
             updatePendingTotals()
+        }
+    }
+    
+    /**
+     * Fuerza la actualización completa de balances después de sincronizar.
+     * Llama a esto después de que un voucher se sincroniza exitosamente.
+     * 
+     * 1. Actualiza saldo real desde blockchain (que ahora incluye la TX)
+     * 2. Recalcula totales de pending (que ahora excluye los sincronizados)
+     * 3. Actualiza UI
+     */
+    fun forceRefreshAfterSync() {
+        viewModelScope.launch {
+            android.util.Log.d("WalletViewModel", "🔄 Forzando refresh completo después de sync...")
+            
+            // 1. Actualizar pending totals (los sincronizados ya fueron eliminados)
+            updatePendingTotals()
+            android.util.Log.d("WalletViewModel", "  Incoming pending: ${_incomingPending.value}")
+            android.util.Log.d("WalletViewModel", "  Outgoing pending: ${_outgoingPending.value}")
+            
+            // 2. Si está online, actualizar saldo real desde blockchain
+            if (_isOnline.value) {
+                refreshRealBalance()
+            } else {
+                // Si está offline, recalcular shadow balance
+                calculateShadowBalance()
+            }
+            
+            android.util.Log.d("WalletViewModel", "✅ Refresh completo finalizado")
         }
     }
 }

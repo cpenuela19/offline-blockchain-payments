@@ -30,10 +30,13 @@ import androidx.compose.ui.unit.sp
 import com.g22.offline_blockchain_payments.ble.model.ConnectionState
 import com.g22.offline_blockchain_payments.ble.permission.PermissionManager
 import com.g22.offline_blockchain_payments.ble.viewmodel.PaymentBleViewModel
+import com.g22.offline_blockchain_payments.data.config.WalletConfig
+import com.g22.offline_blockchain_payments.data.repository.VoucherRepository
 import com.g22.offline_blockchain_payments.ui.components.BalanceCard
 import com.g22.offline_blockchain_payments.ui.components.NetworkStatusIndicator
 import com.g22.offline_blockchain_payments.ui.theme.*
 import com.g22.offline_blockchain_payments.ui.util.NumberFormatter
+import kotlinx.coroutines.launch
 
 @Composable
 fun ReceiveScreen(
@@ -43,6 +46,8 @@ fun ReceiveScreen(
     onPaymentReceived: (amount: Long, transactionId: String) -> Unit
 ) {
     val context = LocalContext.current
+    val voucherRepository = remember { VoucherRepository(context) }
+    val coroutineScope = rememberCoroutineScope()
     var amountToReceive by remember { mutableStateOf(TextFieldValue("")) }
     var concept by remember { mutableStateOf("") }
     var showQR by remember { mutableStateOf(false) }
@@ -61,10 +66,12 @@ fun ReceiveScreen(
         if (permissions.all { it.value }) {
             // Permisos concedidos, iniciar host
             val amount = NumberFormatter.parseAmount(amountToReceive.text) ?: 0L
-            val finalConcept = concept.trim().ifEmpty { null }
+            val finalConcept = concept.trim().ifEmpty { null}
+            val sellerAddress = WalletConfig.getCurrentAddress(context)
             viewModel.startAsHost(
                 amount = amount, // Monto en AP (sin conversión)
                 receiverName = "Marta Gomez", // TODO: Obtener de perfil de usuario
+                sellerAddress = sellerAddress, // NUEVO: Address del vendedor para prevenir auto-transferencias
                 concept = finalConcept
             )
             showQR = true
@@ -72,21 +79,89 @@ fun ReceiveScreen(
         }
     }
     
-    // Observar cuando se recibe una transacción de pago
+    // ARQUITECTURA ROBUSTA: Observar cuando se recibe pago del comprador
+    // Verificar firma, firmar como vendedor, incrementar shadow balance, enviar respuesta
     LaunchedEffect(paymentTransaction) {
         paymentTransaction?.let { tx ->
-            android.util.Log.d("ReceiveScreen", "📦 PaymentTransaction detected: ID=${tx.transactionId}, Amount=${tx.amount}, HasNavigated=$hasNavigated")
-            // Solo navegar una vez y si tiene un transactionId válido
-            if (!hasNavigated && tx.transactionId.isNotEmpty()) {
-                android.util.Log.d("ReceiveScreen", "✅ Navigating to receipt...")
-                hasNavigated = true
-                // Dar un pequeño delay para asegurar que el estado se estabilice
-                kotlinx.coroutines.delay(500)
-                // Pago recibido exitosamente - navegar a recibo
-                onPaymentReceived(tx.amount, tx.transactionId)
-                android.util.Log.d("ReceiveScreen", "🎯 Navigation triggered!")
-            } else {
-                android.util.Log.d("ReceiveScreen", "⚠️ Navigation skipped - already navigated or empty ID")
+            android.util.Log.d("ReceiveScreen", "📦 PaymentTransaction recibida: ID=${tx.transactionId}, Amount=${tx.amount}")
+            
+            // Solo procesar una vez y si tiene un transactionId válido
+            if (!hasNavigated && tx.transactionId.isNotEmpty() && tx.buyerSig != null) {
+                android.util.Log.d("ReceiveScreen", "🔐 Verificando firma del comprador...")
+                
+                try {
+                    // Obtener address y privateKey del vendedor
+                    // (se desbloqueará automáticamente si es necesario)
+                    val sellerAddress = WalletConfig.getCurrentAddress(context)
+                    val privateKey = WalletConfig.getCurrentPrivateKey(context)
+                    
+                    // Verificar firma del comprador y firmar como vendedor
+                    val result = viewModel.verifyAndSignAsSeller(
+                        receivedTransaction = tx,
+                        walletViewModel = walletViewModel,
+                        sellerAddress = sellerAddress,
+                        privateKey = privateKey
+                    )
+                    
+                    if (result.isSuccess) {
+                        val sellerSig = result.getOrNull()!!
+                        android.util.Log.d("ReceiveScreen", "✅ Firma del vendedor generada: ${sellerSig.take(20)}...")
+                        
+                        // Enviar sellerSig de vuelta al comprador vía BLE (formato JSON)
+                        val sellerSigJson = """{"type":"SELLER_SIG","signature":"$sellerSig"}"""
+                        android.util.Log.d("ReceiveScreen", "📤 [SEND] Preparando mensaje JSON para enviar")
+                        android.util.Log.d("ReceiveScreen", "📤 [SEND] JSON a enviar: $sellerSigJson")
+                        android.util.Log.d("ReceiveScreen", "📤 [SEND] Longitud del mensaje: ${sellerSigJson.length} chars")
+                        
+                        viewModel.sendMessage(sellerSigJson)
+                        
+                        android.util.Log.d("ReceiveScreen", "✅ [SEND] sendMessage() llamado exitosamente")
+                        
+                        // Guardar voucher localmente con ambas firmas y permit
+                        voucherRepository.createSettledVoucherWithAddresses(
+                            role = "seller",
+                            amountAp = tx.amount,
+                            counterparty = tx.senderName,
+                            expiry = tx.expiry ?: (System.currentTimeMillis() / 1000 + 86400),
+                            offerId = tx.transactionId,
+                            buyerAddress = tx.buyerAddress,
+                            sellerAddress = tx.sellerAddress,
+                            buyerSig = tx.buyerSig ?: "",
+                            sellerSig = sellerSig,
+                            // Datos de permit
+                            permitOwner = tx.permitOwner ?: "",
+                            permitSpender = tx.permitSpender ?: "",
+                            permitValue = tx.permitValue ?: "",
+                            permitNonce = tx.permitNonce ?: 0L,
+                            permitDeadline = tx.permitDeadline ?: 0L,
+                            permitV = tx.permitV ?: 0,
+                            permitR = tx.permitR ?: "",
+                            permitS = tx.permitS ?: ""
+                        )
+                        android.util.Log.d("ReceiveScreen", "💾 Voucher guardado localmente")
+                        
+                        // Navegar a recibo
+                        hasNavigated = true
+                        kotlinx.coroutines.delay(500)
+                        onPaymentReceived(tx.amount, tx.transactionId)
+                        android.util.Log.d("ReceiveScreen", "🎯 Navegando a recibo...")
+                        
+                    } else {
+                        // Firma inválida - enviar error al comprador
+                        val error = result.exceptionOrNull()?.message ?: "Firma inválida"
+                        android.util.Log.e("ReceiveScreen", "❌ Error: $error")
+                        
+                        viewModel.sendMessage("ERROR:$error")
+                        android.util.Log.d("ReceiveScreen", "📤 Error enviado al comprador")
+                    }
+                    
+                } catch (e: Exception) {
+                    android.util.Log.e("ReceiveScreen", "❌ Excepción: ${e.message}", e)
+                    viewModel.sendMessage("ERROR:${e.message}")
+                }
+                
+            } else if (!hasNavigated && tx.transactionId.isNotEmpty() && tx.buyerSig == null) {
+                android.util.Log.w("ReceiveScreen", "⚠️ Transacción sin firma del comprador (flujo viejo?)")
             }
         } ?: run {
             android.util.Log.d("ReceiveScreen", "❌ PaymentTransaction is null")
@@ -153,9 +228,11 @@ fun ReceiveScreen(
                         if (PermissionManager.areHostPermissionsGranted(context)) {
                             val amount = NumberFormatter.parseAmount(amountToReceive.text) ?: 0L
                             val finalConcept = concept.trim().ifEmpty { null }
+                            val sellerAddress = WalletConfig.getCurrentAddress(context)
                             viewModel.startAsHost(
                                 amount = amount, // Monto en AP (sin conversión)
                                 receiverName = "Marta Gomez",
+                                sellerAddress = sellerAddress, // NUEVO: Address del vendedor
                                 concept = finalConcept
                             )
                             showQR = true

@@ -25,6 +25,7 @@ class VoucherRepository(private val context: Context) {
     private val database = AppDatabase.getDatabase(context)
     private val voucherDao = database.voucherDao()
     private val outboxDao = database.outboxDao()
+    private val pendingBalanceRepository = PendingBalanceRepository(database)
     private val apiService = ApiClient.apiService
     private val gson = Gson()
     
@@ -142,6 +143,8 @@ class VoucherRepository(private val context: Context) {
         voucherDao.insertVoucher(voucher)
         
         // Crear request de settle para outbox
+        // NOTA: Esta función es legacy para self-transfers (buyer == seller)
+        // No requiere permit real, así que se usan valores por defecto
         val settleRequest = SettleRequest(
             offer_id = finalOfferId,
             amount_ap = amountAp.toString(),
@@ -150,7 +153,21 @@ class VoucherRepository(private val context: Context) {
             buyer_address = walletAddress,
             seller_address = walletAddress,
             buyer_sig = buyerSig,
-            seller_sig = sellerSig
+            seller_sig = sellerSig,
+            canonical = canonical,
+            // Valores por defecto para permit (no aplicable en self-transfers)
+            permit = com.g22.offline_blockchain_payments.data.api.PermitData(
+                owner = "",
+                spender = "",
+                value = "",
+                nonce = 0L,
+                deadline = 0L
+            ),
+            permit_sig = com.g22.offline_blockchain_payments.data.api.PermitSignature(
+                v = 0,
+                r = "",
+                s = ""
+            )
         )
         
         // Medir tamaño del voucher firmado (serializado a JSON)
@@ -186,8 +203,229 @@ class VoucherRepository(private val context: Context) {
         return voucher
     }
     
+    /**
+     * Crea un voucher con settle usando addresses DISTINTAS y firmas ya creadas.
+     * NUEVA ARQUITECTURA: Para pagos offline con BLE donde buyer y seller son wallets diferentes.
+     * 
+     * Esta función NO genera firmas, las recibe como parámetros.
+     * Usa las addresses exactas intercambiadas vía QR/BLE.
+     * 
+     * CAPA 1: Shadow balance ya manejado por el ViewModel
+     * CAPA 2: Firmas criptográficas ya verificadas
+     * CAPA 3: Offer ID único recibido del comprador
+     * 
+     * @param role Rol del usuario local (BUYER o SELLER)
+     * @param amountAp Monto en AgroPuntos
+     * @param counterparty Alias de la contraparte
+     * @param expiry Timestamp de expiración (Unix timestamp)
+     * @param offerId UUID único de la transacción (offer_id)
+     * @param buyerAddress Dirección del wallet del comprador
+     * @param sellerAddress Dirección del wallet del vendedor (DEBE ser diferente a buyerAddress)
+     * @param buyerSig Firma del comprador (ya generada)
+     * @param sellerSig Firma del vendedor (ya generada)
+     * @return VoucherEntity creado
+     */
+    suspend fun createSettledVoucherWithAddresses(
+        role: String,
+        amountAp: Long,
+        counterparty: String,
+        expiry: Long,
+        offerId: String,
+        buyerAddress: String,
+        sellerAddress: String,
+        buyerSig: String,
+        sellerSig: String,
+        // NUEVOS: Parámetros de permit EIP-2612
+        permitOwner: String,
+        permitSpender: String,
+        permitValue: String,
+        permitNonce: Long,
+        permitDeadline: Long,
+        permitV: Int,
+        permitR: String,
+        permitS: String
+    ): VoucherEntity {
+        val createdAt = System.currentTimeMillis() / 1000
+        
+        // Validación crítica: buyer y seller deben ser diferentes
+        if (buyerAddress.lowercase() == sellerAddress.lowercase()) {
+            throw IllegalArgumentException(
+                "⚠️ SEGURIDAD: buyerAddress y sellerAddress deben ser diferentes. " +
+                "Recibido: buyer=$buyerAddress, seller=$sellerAddress"
+            )
+        }
+        
+        Log.d("SettledVoucherWithAddresses", "📋 Creando voucher con addresses distintas")
+        Log.d("SettledVoucherWithAddresses", "  Offer ID: $offerId")
+        Log.d("SettledVoucherWithAddresses", "  Buyer: ${buyerAddress.take(10)}...")
+        Log.d("SettledVoucherWithAddresses", "  Seller: ${sellerAddress.take(10)}...")
+        Log.d("SettledVoucherWithAddresses", "  Amount: $amountAp AP")
+        
+        // Convertir role string a enum (para compatibilidad)
+        val roleEnum = if (role.uppercase() == "BUYER") Role.BUYER else Role.SELLER
+        
+        // Crear voucher con addresses DISTINTAS (sin firmar, ya vienen firmadas)
+        val voucher = VoucherEntity(
+            id = offerId,
+            role = roleEnum,
+            amountAp = amountAp,
+            counterparty = counterparty,
+            createdAt = createdAt,
+            status = VoucherStatus.GUARDADO_SIN_SENAL, // Listo para sincronizar
+            asset = "AP",
+            expiry = expiry,
+            buyerAddress = buyerAddress,   // Address del comprador (diferente)
+            sellerAddress = sellerAddress, // Address del vendedor (diferente)
+            buyerSig = buyerSig,           // Firma ya creada por el comprador
+            sellerSig = sellerSig,         // Firma ya creada por el vendedor
+            // NUEVOS: Datos de permit EIP-2612
+            permitOwner = permitOwner,
+            permitSpender = permitSpender,
+            permitValue = permitValue,
+            permitNonce = permitNonce,
+            permitDeadline = permitDeadline,
+            permitV = permitV,
+            permitR = permitR,
+            permitS = permitS
+        )
+        
+        // Persistir voucher
+        voucherDao.insertVoucher(voucher)
+        Log.d("SettledVoucherWithAddresses", "💾 Voucher guardado en DB local")
+        
+        // Reconstruir canonical para enviar al backend
+        val base = com.g22.offline_blockchain_payments.data.crypto.PaymentBase(
+            asset = "AP",
+            buyer_address = buyerAddress,
+            expiry = expiry,
+            offer_id = offerId,
+            seller_address = sellerAddress,
+            amount_ap = amountAp.toString()
+        )
+        val canonical = com.g22.offline_blockchain_payments.data.crypto.VoucherCanonicalizer.canonicalizePaymentBase(base)
+        
+        // Crear request de settle para outbox (con addresses distintas y permit)
+        val settleRequest = SettleRequest(
+            offer_id = offerId,
+            amount_ap = amountAp.toString(),
+            asset = "AP",
+            expiry = expiry,
+            buyer_address = buyerAddress,
+            seller_address = sellerAddress,
+            buyer_sig = buyerSig,
+            seller_sig = sellerSig,
+            canonical = canonical,
+            // NUEVOS: Datos de permit EIP-2612 como objetos anidados
+            permit = com.g22.offline_blockchain_payments.data.api.PermitData(
+                owner = permitOwner,
+                spender = permitSpender,
+                value = permitValue,
+                nonce = permitNonce,
+                deadline = permitDeadline
+            ),
+            permit_sig = com.g22.offline_blockchain_payments.data.api.PermitSignature(
+                v = permitV,
+                r = permitR,
+                s = permitS
+            )
+        )
+        
+        // Verificar si ya existe un outbox item con este ID (CAPA 3: idempotencia)
+        val existingOutbox = outboxDao.getOutboxItemById(offerId)
+        if (existingOutbox == null) {
+            val outboxItem = OutboxEntity(
+                id = offerId,
+                payload = gson.toJson(settleRequest),
+                attempts = 0,
+                nextAttemptAt = System.currentTimeMillis()
+            )
+            
+            outboxDao.insertOutboxItem(outboxItem)
+            Log.d("SettledVoucherWithAddresses", "📦 Outbox item creado: $offerId")
+        } else {
+            Log.d("SettledVoucherWithAddresses", "⚠️ Outbox item ya existe (idempotencia), omitiendo: $offerId")
+        }
+        
+        // Disparar sync inmediato si hay red
+        SyncWorker.enqueueOneTime(context)
+        Log.d("SettledVoucherWithAddresses", "🚀 Sincronización encolada")
+        
+        Log.d("SettledVoucherWithAddresses", "✅ Voucher offline con addresses distintas creado exitosamente")
+        
+        return voucher
+    }
+    
     suspend fun getPendingOutboxItems(): List<OutboxEntity> {
         return outboxDao.getPendingOutboxItems(System.currentTimeMillis())
+    }
+    
+    /**
+     * Actualiza el nonce cacheado después de sincronizar exitosamente.
+     * Esto mantiene el caché alineado con el estado real de la blockchain.
+     */
+    private suspend fun updateNonceCacheAfterSync(userAddress: String) {
+        try {
+            Log.d("VoucherRepository", "🔄 Actualizando nonce cacheado para $userAddress...")
+            
+            // Consultar el nonce real actual desde el blockchain
+            val realNonce = com.g22.offline_blockchain_payments.data.crypto.NonceReader.getNonceAsLong(userAddress)
+            
+            // Actualizar el caché
+            com.g22.offline_blockchain_payments.data.crypto.NonceReader.setCachedNonce(
+                context = context,
+                userAddress = userAddress,
+                nonce = realNonce
+            )
+            
+            Log.d("VoucherRepository", "✅ Nonce cacheado actualizado: $realNonce")
+        } catch (e: Exception) {
+            Log.w("VoucherRepository", "⚠️ No se pudo actualizar nonce cacheado: ${e.message}")
+            // No es crítico, el caché se actualizará en el próximo pago online
+        }
+    }
+    
+    /**
+     * Limpia los pending_vouchers después de sincronizar exitosamente.
+     * 
+     * ESTRATEGIA: Cuando un voucher se sincroniza exitosamente, el balance real en blockchain
+     * ya refleja esa transacción. Por lo tanto, todos los pending_vouchers antiguos ya no
+     * son necesarios y pueden ser limpiados.
+     * 
+     * Esto funciona porque:
+     * 1. Los pending se crean al momento del pago (offline)
+     * 2. Cuando el pago se confirma en blockchain, el balance real ya lo incluye
+     * 3. Por lo tanto, mantener los pending causaría doble contabilización
+     * 
+     * IMPORTANTE: Esta función se ejecuta en el contexto del WorkManager (background thread)
+     */
+    private suspend fun onSyncSuccess() {
+        try {
+            // Obtener todos los pending_vouchers no sincronizados
+            val pendingDao = database.pendingVoucherDao()
+            val allPending = pendingDao.getAllPendingList()
+            
+            if (allPending.isEmpty()) {
+                Log.d("VoucherRepository", "✅ No hay pending vouchers para limpiar")
+                return
+            }
+            
+            Log.d("VoucherRepository", "🧹 Limpiando ${allPending.size} pending vouchers...")
+            
+            // Marcar TODOS como sincronizados
+            // (porque el balance real ahora refleja todas las transacciones confirmadas)
+            allPending.forEach { pending ->
+                pendingDao.markAsSynced(pending.id)
+                Log.d("VoucherRepository", "  ✓ Marcado como synced: ${pending.id} (${pending.type}, ${pending.amountAp} AP)")
+            }
+            
+            // Limpiar los sincronizados
+            val deletedCount = pendingBalanceRepository.deleteSynced()
+            
+            Log.d("VoucherRepository", "🧹 Limpiados $deletedCount pending vouchers después de sync exitoso")
+            Log.d("VoucherRepository", "📢 NOTA: WalletViewModel se actualizará automáticamente al observar cambios en pending_vouchers")
+        } catch (e: Exception) {
+            Log.e("VoucherRepository", "❌ Error limpiando pending vouchers: ${e.message}", e)
+        }
     }
     
     suspend fun syncVoucher(outboxItem: OutboxEntity): Boolean {
@@ -210,10 +448,16 @@ class VoucherRepository(private val context: Context) {
                 val settleRequest: SettleRequest = gson.fromJson(outboxItem.payload, SettleRequest::class.java)
                 val response = apiService.settleVoucher(settleRequest)
                 
+                Log.d("SyncVoucher", "📡 Respuesta del settle: HTTP ${response.code()}")
+                
                 when (response.code()) {
                     200 -> {
                         val body = response.body()
+                        Log.d("SyncVoucher", "📦 Body recibido: status=${body?.status}, message=${body?.message}")
+                        
                         if (body?.status == "queued" || body?.status == "already_settled") {
+                            Log.d("SyncVoucher", "✅ Settle aceptado con status: ${body.status}")
+                            
                             // El voucher fue aceptado, ahora consultar el tx_hash
                             val txResponse = apiService.getTransaction(voucher.id)
                             val txHash = if (txResponse.isSuccessful && txResponse.body() != null) {
@@ -239,18 +483,26 @@ class VoucherRepository(private val context: Context) {
                             if (txHash != null) {
                                 outboxDao.deleteOutboxItemById(outboxItem.id)
                                 Log.d("SyncVoucher", "✅ Settle sincronizado: ${voucher.id}, tx_hash: $txHash")
+                                
+                                // Limpiar pending vouchers ahora que el balance real está actualizado
+                                onSyncSuccess()
+                                
+                                // Actualizar nonce cacheado con el valor real del blockchain
+                                updateNonceCacheAfterSync(settleRequest.buyer_address)
                             } else {
                                 Log.d("SyncVoucher", "⏳ Settle queued, esperando tx_hash: ${voucher.id}")
                             }
                             return true
                         } else {
                             Log.e("SyncVoucher", "❌ Status inesperado en settle: ${body?.status}")
+                            Log.e("SyncVoucher", "❌ Body completo: $body")
+                            Log.e("SyncVoucher", "❌ Message: ${body?.message}")
                             return false
                         }
                     }
                     409 -> {
                         // Idempotencia: duplicado, consultar estado automáticamente
-                        Log.d("SyncVoucher", "⚠️ 409 Conflict, consultando estado del voucher: ${voucher.id}")
+                        Log.d("SyncVoucher", "⚠️ 409 Conflict (settle), consultando estado del voucher: ${voucher.id}")
                         val txResponse = apiService.getTransaction(voucher.id)
                         if (txResponse.isSuccessful && txResponse.body() != null) {
                             val txBody = txResponse.body()!!
@@ -264,6 +516,16 @@ class VoucherRepository(private val context: Context) {
                             )
                             outboxDao.deleteOutboxItemById(outboxItem.id)
                             Log.d("SyncVoucher", "✅ Voucher ya existe, estado actualizado: ${voucher.id}")
+                            
+                            // SIEMPRE limpiar pending vouchers cuando se confirma que el voucher ya fue procesado
+                            // (incluso si tx_hash no está disponible todavía)
+                            onSyncSuccess()
+                            
+                            // Actualizar nonce cacheado si tenemos tx_hash
+                            if (txHash != null) {
+                                updateNonceCacheAfterSync(settleRequest.buyer_address)
+                            }
+                            
                             return true
                         } else {
                             // Si falla la consulta, reintentar después
@@ -332,8 +594,14 @@ class VoucherRepository(private val context: Context) {
                         return true
                     }
                     else -> {
-                        // Error 5xx, reintentar con backoff
-                        Log.w("SyncVoucher", "⚠️ Error ${response.code()} en settle, reintentando...")
+                        // Error 5xx u otro código, reintentar con backoff
+                        val errorBody = try {
+                            response.errorBody()?.string() ?: response.body()?.toString() ?: "Sin body"
+                        } catch (e: Exception) {
+                            "Error leyendo body: ${e.message}"
+                        }
+                        Log.e("SyncVoucher", "⚠️ Error HTTP ${response.code()} en settle")
+                        Log.e("SyncVoucher", "⚠️ Error body: $errorBody")
                         return false
                     }
                 }
@@ -351,6 +619,10 @@ class VoucherRepository(private val context: Context) {
                             txHash = body.tx_hash
                         )
                         outboxDao.deleteOutboxItemById(outboxItem.id)
+                        
+                        // Limpiar pending vouchers después de sync exitoso
+                        onSyncSuccess()
+                        
                         return true
                     }
                     409 -> {
@@ -369,6 +641,11 @@ class VoucherRepository(private val context: Context) {
                             )
                             outboxDao.deleteOutboxItemById(outboxItem.id)
                             Log.d("SyncVoucher", "✅ Voucher ya existe, estado actualizado: ${voucher.id}")
+                            
+                            // SIEMPRE limpiar pending vouchers cuando se confirma que el voucher ya fue procesado
+                            // (incluso si tx_hash no está disponible todavía)
+                            onSyncSuccess()
+                            
                             return true
                         } else {
                             // Si falla la consulta, reintentar después
@@ -501,6 +778,8 @@ class VoucherRepository(private val context: Context) {
             Log.d("SettleDemo", "Seller sig: $sellerSig")
             
             // Crear request
+            // NOTA: Esta función es legacy para testing de self-transfers
+            // No requiere permit real, así que se usan valores por defecto
             val request = SettleRequest(
                 offer_id = offerId,
                 amount_ap = amountAp,
@@ -509,7 +788,21 @@ class VoucherRepository(private val context: Context) {
                 buyer_address = walletAddress,
                 seller_address = walletAddress,
                 buyer_sig = buyerSig,
-                seller_sig = sellerSig
+                seller_sig = sellerSig,
+                canonical = canonical,
+                // Valores por defecto para permit (no aplicable en self-transfers)
+                permit = com.g22.offline_blockchain_payments.data.api.PermitData(
+                    owner = "",
+                    spender = "",
+                    value = "",
+                    nonce = 0L,
+                    deadline = 0L
+                ),
+                permit_sig = com.g22.offline_blockchain_payments.data.api.PermitSignature(
+                    v = 0,
+                    r = "",
+                    s = ""
+                )
             )
             
             // Enviar al servidor

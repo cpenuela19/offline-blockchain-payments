@@ -104,5 +104,31 @@ object EthereumSigner {
         
         return address.lowercase()
     }
+    
+    /**
+     * Verifica una firma EIP-191 comparando la dirección recuperada con la esperada.
+     * CAPA 2: Autenticación criptográfica de las transacciones offline.
+     * 
+     * @param message Mensaje canónico firmado
+     * @param signature Firma en formato "0x..." (65 bytes)
+     * @param expectedAddress Dirección esperada del firmante
+     * @return true si la firma es válida y coincide con expectedAddress, false en caso contrario
+     */
+    fun verifySignatureEip191(
+        message: String,
+        signature: String,
+        expectedAddress: String
+    ): Boolean {
+        return try {
+            val recoveredAddress = recoverAddress(message, signature)
+            // Comparar ignorando case y formato (con o sin 0x)
+            val normalizedExpected = expectedAddress.lowercase().removePrefix("0x")
+            val normalizedRecovered = recoveredAddress.lowercase().removePrefix("0x")
+            normalizedExpected == normalizedRecovered
+        } catch (e: Exception) {
+            android.util.Log.e("EthereumSigner", "Error verifying signature: ${e.message}", e)
+            false
+        }
+    }
 }
 
