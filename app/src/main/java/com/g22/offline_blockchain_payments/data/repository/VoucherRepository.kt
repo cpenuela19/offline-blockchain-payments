@@ -14,6 +14,7 @@ import com.g22.offline_blockchain_payments.data.crypto.VoucherCanonicalizer
 import com.g22.offline_blockchain_payments.data.database.AppDatabase
 import com.g22.offline_blockchain_payments.data.database.OutboxEntity
 import com.g22.offline_blockchain_payments.data.database.VoucherEntity
+import com.g22.offline_blockchain_payments.metrics.MetricsCollector
 import com.g22.offline_blockchain_payments.ui.data.Role
 import com.g22.offline_blockchain_payments.ui.data.VoucherStatus
 import com.g22.offline_blockchain_payments.worker.SyncWorker
@@ -330,12 +331,18 @@ class VoucherRepository(private val context: Context) {
             )
         )
         
+        // MÉTRICAS: Medir tamaño del voucher firmado (serializado a JSON)
+        val jsonString = gson.toJson(settleRequest)
+        val voucherSizeBytes = jsonString.toByteArray(Charsets.UTF_8).size
+        MetricsCollector.recordVoucherSize(voucherSizeBytes)
+        Log.d("SettledVoucherWithAddresses", "📊 Voucher size: $voucherSizeBytes bytes")
+        
         // Verificar si ya existe un outbox item con este ID (CAPA 3: idempotencia)
         val existingOutbox = outboxDao.getOutboxItemById(offerId)
         if (existingOutbox == null) {
             val outboxItem = OutboxEntity(
                 id = offerId,
-                payload = gson.toJson(settleRequest),
+                payload = jsonString,
                 attempts = 0,
                 nextAttemptAt = System.currentTimeMillis()
             )
@@ -345,6 +352,10 @@ class VoucherRepository(private val context: Context) {
         } else {
             Log.d("SettledVoucherWithAddresses", "⚠️ Outbox item ya existe (idempotencia), omitiendo: $offerId")
         }
+        
+        // MÉTRICAS: Completar timer de pago offline (el offerId es el transactionId)
+        MetricsCollector.completeOfflinePaymentTimer(offerId)
+        Log.d("SettledVoucherWithAddresses", "📊 Payment timer completed for: $offerId")
         
         // Disparar sync inmediato si hay red
         SyncWorker.enqueueOneTime(context)

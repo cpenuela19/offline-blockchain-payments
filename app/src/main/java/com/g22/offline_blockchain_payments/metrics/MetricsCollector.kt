@@ -103,6 +103,8 @@ object MetricsCollector {
      * @return File del archivo JSON creado
      */
     fun exportToJson(context: Context): File {
+        Log.d(TAG, "📤 Iniciando exportación de métricas...")
+        
         val gson: Gson = GsonBuilder()
             .setPrettyPrinting()
             .create()
@@ -116,22 +118,39 @@ object MetricsCollector {
             "ble_attempts" to synchronized(this) { bleAttempts },
             "total_offline_payments" to synchronized(offlinePaymentTimes) { offlinePaymentTimes.size },
             "total_vouchers_measured" to synchronized(voucherSizes) { voucherSizes.size },
-            "total_syncs_measured" to synchronized(syncTimes) { syncTimes.size }
+            "total_syncs_measured" to synchronized(syncTimes) { syncTimes.size },
+            "export_timestamp" to System.currentTimeMillis(),
+            "export_date" to java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
         )
+        
+        Log.d(TAG, "📊 Métricas a exportar: ${metricsData.size} campos")
+        Log.d(TAG, "   - Pagos offline: ${metricsData["total_offline_payments"]}")
+        Log.d(TAG, "   - Vouchers medidos: ${metricsData["total_vouchers_measured"]}")
+        Log.d(TAG, "   - Syncs medidos: ${metricsData["total_syncs_measured"]}")
+        Log.d(TAG, "   - Intentos BLE: ${metricsData["ble_attempts"]}")
+        Log.d(TAG, "   - Fallos BLE: ${metricsData["ble_failures"]}")
         
         // Obtener directorio de almacenamiento externo
         val externalDir = context.getExternalFilesDir(null)
+        Log.d(TAG, "📁 ExternalFilesDir: ${externalDir?.absolutePath ?: "NULL"}")
+        
         val metricsDir = if (externalDir != null) {
             File(externalDir, "metrics").apply {
                 if (!exists()) {
-                    mkdirs()
+                    val created = mkdirs()
+                    Log.d(TAG, "📁 Creando carpeta metrics: $created (${this.absolutePath})")
+                } else {
+                    Log.d(TAG, "📁 Carpeta metrics ya existe: ${this.absolutePath}")
                 }
             }
         } else {
             // Fallback a almacenamiento interno
             File(context.filesDir, "metrics").apply {
                 if (!exists()) {
-                    mkdirs()
+                    val created = mkdirs()
+                    Log.d(TAG, "📁 Creando carpeta metrics (internal): $created (${this.absolutePath})")
+                } else {
+                    Log.d(TAG, "📁 Carpeta metrics ya existe (internal): ${this.absolutePath}")
                 }
             }
         }
@@ -141,12 +160,28 @@ object MetricsCollector {
         val fileName = "metrics_${timestamp}.json"
         val metricsFile = File(metricsDir, fileName)
         
+        Log.d(TAG, "📄 Creando archivo: ${metricsFile.absolutePath}")
+        
         // Escribir JSON
-        FileWriter(metricsFile).use { writer ->
-            gson.toJson(metricsData, writer)
+        try {
+            FileWriter(metricsFile).use { writer ->
+                gson.toJson(metricsData, writer)
+            }
+            Log.d(TAG, "✅ Archivo JSON escrito exitosamente (${metricsFile.length()} bytes)")
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error escribiendo archivo JSON: ${e.message}", e)
+            throw e
         }
         
-        Log.d(TAG, "✅ Metrics exported to: ${metricsFile.absolutePath}")
+        // Verificar que el archivo se creó
+        if (metricsFile.exists()) {
+            Log.d(TAG, "✅ Metrics exported to: ${metricsFile.absolutePath}")
+            Log.d(TAG, "✅ File size: ${metricsFile.length()} bytes")
+            Log.d(TAG, "✅ Can read: ${metricsFile.canRead()}")
+        } else {
+            Log.e(TAG, "❌ ERROR: Archivo NO existe después de escribirlo!")
+        }
+        
         return metricsFile
     }
     
@@ -180,6 +215,32 @@ object MetricsCollector {
     }
     
     /**
+     * Lista todos los archivos de métricas exportados
+     * @return Lista de archivos JSON en la carpeta metrics
+     */
+    fun listExportedFiles(context: Context): List<File> {
+        val externalDir = context.getExternalFilesDir(null)
+        val metricsDir = if (externalDir != null) {
+            File(externalDir, "metrics")
+        } else {
+            File(context.filesDir, "metrics")
+        }
+        
+        if (!metricsDir.exists()) {
+            Log.d(TAG, "📁 Carpeta metrics no existe todavía")
+            return emptyList()
+        }
+        
+        val files = metricsDir.listFiles()?.filter { it.extension == "json" } ?: emptyList()
+        Log.d(TAG, "📁 Archivos de métricas encontrados: ${files.size}")
+        files.forEach { file ->
+            Log.d(TAG, "   - ${file.name} (${file.length()} bytes)")
+        }
+        
+        return files
+    }
+    
+    /**
      * Limpia todas las métricas (útil para pruebas)
      */
     fun clear() {
@@ -191,6 +252,9 @@ object MetricsCollector {
         }
         synchronized(syncTimes) {
             syncTimes.clear()
+        }
+        synchronized(paymentStartTimes) {
+            paymentStartTimes.clear()
         }
         synchronized(this) {
             bleFailures = 0

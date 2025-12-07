@@ -412,10 +412,15 @@ fun UserDataScreen(
             Button(
                 onClick = {
                     try {
+                        android.util.Log.d("UserDataScreen", "🔵 Usuario presionó 'Exportar Métricas'")
                         val metricsFile = MetricsCollector.exportToJson(context)
-                        val message = "✅ Métricas exportadas:\n${metricsFile.absolutePath}"
+                        val shortPath = metricsFile.name // Solo el nombre del archivo
+                        val message = "✅ Métricas exportadas:\n${shortPath}\n\nVer Logcat con tag 'MetricsCollector' para la ruta completa"
                         Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                        android.util.Log.i("UserDataScreen", "✅ Archivo exportado: ${metricsFile.absolutePath}")
+                        android.util.Log.i("UserDataScreen", "✅ Tamaño: ${metricsFile.length()} bytes")
                     } catch (e: Exception) {
+                        android.util.Log.e("UserDataScreen", "❌ Error exportando métricas", e)
                         Toast.makeText(context, "❌ Error al exportar: ${e.message}", Toast.LENGTH_LONG).show()
                     }
                 },
