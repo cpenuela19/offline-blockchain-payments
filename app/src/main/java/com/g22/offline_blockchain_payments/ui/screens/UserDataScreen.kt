@@ -17,7 +17,9 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.g22.offline_blockchain_payments.ui.theme.*
 import com.g22.offline_blockchain_payments.ui.viewmodel.UserDataViewModel
+import com.g22.offline_blockchain_payments.metrics.MetricsCollector
 import android.app.Application
+import android.widget.Toast
 
 /**
  * Pantalla "Tus datos" - Permite al usuario ver su información de identidad
@@ -334,6 +336,114 @@ fun UserDataScreen(
                 }
             }
 
+            Spacer(modifier = Modifier.height(24.dp))
+            
+            // Sección de métricas (siempre visible)
+            Divider(
+                color = LightSteelBlue.copy(alpha = 0.3f),
+                modifier = Modifier.padding(vertical = 16.dp)
+            )
+            
+            Text(
+                text = "Métricas del Sistema",
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                color = CyanBlue,
+                textAlign = TextAlign.Center
+            )
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            Text(
+                text = "Exporta las métricas capturadas durante el uso de la app",
+                fontSize = 14.sp,
+                color = LightSteelBlue,
+                textAlign = TextAlign.Center
+            )
+            
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            // Mostrar estadísticas actuales
+            val stats = MetricsCollector.getStats()
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = DarkNavyLight
+                ),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "📊 Estadísticas actuales",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = CyanBlue
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Pagos offline: ${stats["offline_payment_count"]}",
+                        fontSize = 12.sp,
+                        color = White
+                    )
+                    Text(
+                        text = "Vouchers medidos: ${stats["voucher_count"]}",
+                        fontSize = 12.sp,
+                        color = White
+                    )
+                    Text(
+                        text = "Sincronizaciones: ${stats["sync_count"]}",
+                        fontSize = 12.sp,
+                        color = White
+                    )
+                    Text(
+                        text = "Intentos BLE: ${stats["ble_attempts"]} (${String.format("%.1f", stats["ble_success_rate"] as Double)}% éxito)",
+                        fontSize = 12.sp,
+                        color = White
+                    )
+                }
+            }
+            
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            // Botón para exportar métricas
+            Button(
+                onClick = {
+                    try {
+                        val metricsFile = MetricsCollector.exportToJson(context)
+                        val message = "✅ Métricas exportadas:\n${metricsFile.absolutePath}"
+                        Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                    } catch (e: Exception) {
+                        Toast.makeText(context, "❌ Error al exportar: ${e.message}", Toast.LENGTH_LONG).show()
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = CyanBlue
+                ),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text(
+                    text = "📥 Exportar Métricas a JSON",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = White
+                )
+            }
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            Text(
+                text = "El archivo se guardará en:\nAndroid/data/com.g22.offline_blockchain_payments/files/metrics/",
+                fontSize = 11.sp,
+                color = LightSteelBlue.copy(alpha = 0.7f),
+                textAlign = TextAlign.Center
+            )
+            
             Spacer(modifier = Modifier.height(24.dp))
         }
     }

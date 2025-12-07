@@ -7,6 +7,7 @@ import android.content.Context
 import android.util.Log
 import com.g22.offline_blockchain_payments.ble.model.ConnectionState
 import com.g22.offline_blockchain_payments.ble.util.BleConstants
+import com.g22.offline_blockchain_payments.metrics.MetricsCollector
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -178,6 +179,14 @@ class BleRepository(private val context: Context) {
                 BluetoothProfile.STATE_CONNECTED -> {
                     _connectionState.value = ConnectionState.Connected
                     Log.d(TAG, "Connected to GATT server, requesting MTU...")
+                    
+                    // Registrar intento exitoso solo si status es GATT_SUCCESS
+                    if (status == BluetoothGatt.GATT_SUCCESS) {
+                        MetricsCollector.recordBleAttempt(success = true)
+                    } else {
+                        MetricsCollector.recordBleAttempt(success = false)
+                    }
+                    
                     // Solicitar MTU más grande (512 bytes) para enviar más datos por paquete
                     val mtuRequested = gatt?.requestMtu(512) ?: false
                     Log.d(TAG, "MTU request: $mtuRequested")
@@ -188,6 +197,10 @@ class BleRepository(private val context: Context) {
                     }
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
+                    // Solo registrar como fallo si fue una desconexión inesperada (status != GATT_SUCCESS)
+                    if (status != BluetoothGatt.GATT_SUCCESS) {
+                        MetricsCollector.recordBleAttempt(success = false)
+                    }
                     _connectionState.value = ConnectionState.Error("Desconectado del servidor")
                     Log.d(TAG, "Disconnected from GATT server")
                 }
@@ -235,6 +248,8 @@ class BleRepository(private val context: Context) {
                 _connectionState.value = ConnectionState.Success("Servicios descubiertos")
             } else {
                 _connectionState.value = ConnectionState.Error("Error descubriendo servicios")
+                // Registrar fallo BLE
+                MetricsCollector.recordBleAttempt(success = false)
             }
         }
         
@@ -255,6 +270,8 @@ class BleRepository(private val context: Context) {
                 Log.e(TAG, "🔵 CLIENT: Write FAILED with status: $status")
                 _connectionState.value = ConnectionState.Error("Error al enviar mensaje: $status")
                 writeCompletion?.complete(false)
+                // Registrar fallo BLE
+                MetricsCollector.recordBleAttempt(success = false)
             }
         }
         
@@ -308,6 +325,8 @@ class BleRepository(private val context: Context) {
             }
             Log.e(TAG, "Advertising failed: $errorMessage")
             _connectionState.value = ConnectionState.Error("Error advertising: $errorMessage")
+            // Registrar fallo BLE
+            MetricsCollector.recordBleAttempt(success = false)
         }
     }
     
@@ -467,6 +486,8 @@ class BleRepository(private val context: Context) {
                 super.onScanFailed(errorCode)
                 Log.e(TAG, "Scan failed: $errorCode")
                 _connectionState.value = ConnectionState.Error("Error al escanear: $errorCode")
+                // Registrar fallo BLE
+                MetricsCollector.recordBleAttempt(success = false)
             }
         }
         
@@ -667,4 +688,3 @@ class BleRepository(private val context: Context) {
         private const val TAG = "BleRepository"
     }
 }
-

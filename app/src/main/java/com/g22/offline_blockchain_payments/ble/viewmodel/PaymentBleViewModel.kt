@@ -8,6 +8,7 @@ import com.g22.offline_blockchain_payments.ble.model.*
 import com.g22.offline_blockchain_payments.ble.repository.BleRepository
 import com.g22.offline_blockchain_payments.ble.util.BleConstants
 import com.g22.offline_blockchain_payments.ble.util.QrGenerator
+import com.g22.offline_blockchain_payments.metrics.MetricsCollector
 import com.g22.offline_blockchain_payments.data.crypto.EthereumSigner
 import com.g22.offline_blockchain_payments.data.crypto.PaymentBase
 import com.g22.offline_blockchain_payments.data.crypto.VoucherCanonicalizer
@@ -278,6 +279,9 @@ class PaymentBleViewModel(private val bleRepository: BleRepository) : ViewModel(
                 // Marcar que debe enviar pago cuando servicios estén listos
                 shouldSendPaymentOnConnect = true
                 
+                // Registrar intento BLE
+                MetricsCollector.recordBleAttempt(success = true)
+                
                 // Iniciar escaneo BLE
                 Log.d(TAG, "🔍 Starting BLE scan...")
                 bleRepository.startScan(serviceUuid) { device ->
@@ -291,6 +295,8 @@ class PaymentBleViewModel(private val bleRepository: BleRepository) : ViewModel(
             } catch (e: Exception) {
                 Log.e(TAG, "❌ Error connecting to host", e)
                 _isConnected.value = false
+                // Registrar fallo BLE
+                MetricsCollector.recordBleAttempt(success = false)
             }
         }
     }
@@ -353,6 +359,9 @@ class PaymentBleViewModel(private val bleRepository: BleRepository) : ViewModel(
                 // 3. CAPA 3: Generar offerId único (previene procesamiento duplicado)
                 val offerId = UUID.randomUUID().toString()
                 Log.d(TAG, "💎 Offer ID generado: $offerId")
+                
+                // Iniciar timer para métricas (usando offerId como clave)
+                MetricsCollector.startOfflinePaymentTimer(offerId)
                 
                 // 4. Crear canonical (formato estandarizado para firma)
                 val expiry = (System.currentTimeMillis() / 1000) + (24 * 60 * 60) // 24 horas
@@ -429,12 +438,12 @@ class PaymentBleViewModel(private val bleRepository: BleRepository) : ViewModel(
                     permitS = permitSig.s
                 )
                 
-                // 7. Guardar en estado pendiente (para posible rollback)
+                // 8. Guardar en estado pendiente (para posible rollback)
                 _pendingTransaction.value = transaction
                 _currentTransactionId.value = offerId
                 Log.d(TAG, "📦 Transacción guardada como pendiente")
                 
-                // 8. Enviar vía BLE con timeout de 60 segundos
+                // 9. Enviar vía BLE con timeout de 60 segundos
                 val confirmationJson = transaction.toJson()
                 Log.d(TAG, "📡 Enviando pago vía BLE...")
                 Log.d(TAG, "📏 JSON size: ${confirmationJson.length} bytes")
@@ -502,6 +511,9 @@ class PaymentBleViewModel(private val bleRepository: BleRepository) : ViewModel(
                 _errorMessage.value = "Error: ${e.message}"
                 _pendingTransaction.value = null
                 _currentTransactionId.value = null
+                
+                // Registrar fallo BLE
+                MetricsCollector.recordBleAttempt(success = false)
             }
         }
     }
@@ -718,4 +730,3 @@ class PaymentBleViewModel(private val bleRepository: BleRepository) : ViewModel(
         private const val TAG = "PaymentBleViewModel"
     }
 }
-
